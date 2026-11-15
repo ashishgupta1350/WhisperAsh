@@ -1,0 +1,15 @@
+{
+  "name": "whisperash-sync",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "db:local": "wrangler d1 execute whisperash --local --file schema.sql",
+    "db:remote": "wrangler d1 execute whisperash --remote --file schema.sql",
+    "dev": "wrangler dev --ip 127.0.0.1 --port 8787",
+    "test": "node test/api.test.mjs",
+    "deploy": "wrangler deploy"
+  },
+  "devDependencies": {
+    "wrangler": "4.162.0"
+  }
+}

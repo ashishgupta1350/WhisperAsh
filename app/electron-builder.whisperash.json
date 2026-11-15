@@ -1,0 +1,30 @@
+{
+  "extends": "electron-builder.json",
+  "appId": "com.whisperash.app",
+  "productName": "WhisperAsh",
+  "protocols": [],
+  "extraMetadata": {
+    "windowsTrayIdentity": false
+  },
+  "directories": {
+    "output": "dist-whisperash"
+  },
+  "win": {
+    "target": [
+      "nsis"
+    ],
+    "azureSignOptions": null,
+    "forceCodeSigning": false,
+    "artifactName": "WhisperAsh-Setup-${version}.${ext}",
+    "extraResources": [],
+    "icon": "src/assets/icon.ico"
+  },
+  "nsis": {
+    "oneClick": false,
+    "perMachine": false,
+    "allowToChangeInstallationDirectory": true,
+    "shortcutName": "WhisperAsh",
+    "uninstallDisplayName": "WhisperAsh"
+  },
+  "publish": null
+}

@@ -1,0 +1,138 @@
+[
+  {
+    "file": "en-fillers.wav",
+    "stt": {
+      "whisper-large-v3-turbo": {
+        "ms": 298,
+        "text": "Um, so I wanted to, uh, tell you that the meeting is on Tuesday. No wait, I mean Wednesday at 3pm. Please send the report before that.",
+        "language": "English",
+        "duration": 11.885000704
+      },
+      "whisper-large-v3": {
+        "ms": 391,
+        "text": "Um, so I wanted to, uh, tell you that the meeting is on Tuesday. No wait, I mean Wednesday at 3pm. Please send the report before that.",
+        "language": "English",
+        "duration": 11.885000704
+      }
+    },
+    "cleanup": {
+      "openai/gpt-oss-20b": {
+        "ms": 554,
+        "text": "I wanted to tell you that the meeting is on Wednesday at 3 pm. Please send the report before that.",
+        "tokens": 746
+      },
+      "openai/gpt-oss-120b": {
+        "ms": 673,
+        "text": "The meeting is on Wednesday at 3 PM. Please send the report before that.",
+        "tokens": 728
+      },
+      "qwen/qwen3.8-27b": {
+        "ms": 187,
+        "text": "The meeting is on Wednesday at 3:00 PM. Please send the report before that.",
+        "tokens": 656
+      }
+    }
+  },
+  {
+    "file": "en-short.wav",
+    "stt": {
+      "whisper-large-v3-turbo": {
+        "ms": 209,
+        "text": "Thanks, see you tomorrow.",
+        "language": "English",
+        "duration": 2.724999936
+      },
+      "whisper-large-v3": {
+        "ms": 262,
+        "text": "Thanks, see you tomorrow.",
+        "language": "English",
+        "duration": 2.724999936
+      }
+    },
+    "cleanup": {
+      "openai/gpt-oss-20b": {
+        "ms": 490,
+        "text": "Thanks, see you tomorrow.",
+        "tokens": 666
+      },
+      "openai/gpt-oss-120b": {
+        "ms": 489,
+        "text": "Thanks, see you tomorrow.",
+        "tokens": 664
+      },
+      "qwen/qwen3.8-27b": {
+        "ms": 168,
+        "text": "Thanks, see you tomorrow.",
+        "tokens": 612
+      }
+    }
+  },
+  {
+    "file": "en-list.wav",
+    "stt": {
+      "whisper-large-v3-turbo": {
+        "ms": 252,
+        "text": "Shopping list. First, milk. Second, eggs. Third, two kilos of rice. And, uh, some bread.",
+        "language": "English",
+        "duration": 11.989999616
+      },
+      "whisper-large-v3": {
+        "ms": 296,
+        "text": "Shopping list. First, milk. Second, eggs. Third, two kilos of rice. And, uh, some bread.",
+        "language": "English",
+        "duration": 11.989999616
+      }
+    },
+    "cleanup": {
+      "openai/gpt-oss-20b": {
+        "ms": 616,
+        "text": "Shopping list. First, milk. Second, eggs. Third, two kilos of rice. And some bread.",
+        "tokens": 735
+      },
+      "openai/gpt-oss-120b": {
+        "ms": 490,
+        "text": "Shopping list. First, milk. Second, eggs. Third, two kilos of rice. And some bread.",
+        "tokens": 770
+      },
+      "qwen/qwen3.8-27b": {
+        "ms": 198,
+        "text": "Shopping list:\n1. Milk\n2. Eggs\n3. Two kilos of rice\n4. Some bread",
+        "tokens": 648
+      }
+    }
+  },
+  {
+    "file": "hinglish-roman.wav",
+    "stt": {
+      "whisper-large-v3-turbo": {
+        "ms": 227,
+        "text": "Han by, kal meeting cancel ho gayi hi, so let us meet on Friday, thik hi.",
+        "language": "English",
+        "duration": 7.010000384
+      },
+      "whisper-large-v3": {
+        "ms": 275,
+        "text": "Hanbai, kal ki meeting cancel ho gai hai, so let us meet on Friday, thek hai.",
+        "language": "English",
+        "duration": 7.010000384
+      }
+    },
+    "cleanup": {
+      "openai/gpt-oss-20b": {
+        "ms": 1429,
+        "text": "Hanbai, kal ki meeting cancel ho gai hai, so let us meet on Friday, thek hai.",
+        "tokens": 774
+      },
+      "openai/gpt-oss-120b": {
+        "ms": 556,
+        "text": "Hanbai, kal ki meeting cancel ho gai hai, so let us meet on Friday, thek hai.",
+        "tokens": 732
+      },
+      "qwen/qwen3.8-27b": {
+        "ms": 221,
+        "text": "Hanbai, kal ki meeting cancel ho gayi hai, so let us meet on Friday, thek hai.",
+        "tokens": 645
+      }
+    }
+  }
+]
