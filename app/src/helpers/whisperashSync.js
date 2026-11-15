@@ -496,7 +496,57 @@ class WhisperAshSync {
     );
     const stt = { minute: q.get("stt", now - 60e3), hour: q.get("stt", now - 3600e3), day: q.get("stt", now - 864e5) };
     const llm = { minute: q.get("llm", now - 60e3), day: q.get("llm", now - 864e5) };
-    return { stt, llm, limits: GROQ_LIMITS };
+    return { stt, llm, limits: GROQ_LIMITS, words: this._wordAllowance(stt) };
+  }
+
+  // "Free words left": Groq's free limits are per rolling 24 h (audio seconds
+  // and requests) with no monthly cap, so the month figure is today's remainder
+  // plus a full day's allowance for every day left in the month.
+  _wordAllowance(stt) {
+    const countWords = (sinceSql) => {
+      try {
+        const rows = this.databaseManager.db
+          .prepare(
+            `SELECT text FROM transcriptions WHERE deleted_at IS NULL AND status = 'completed' AND timestamp >= ?`
+          )
+          .all(sinceSql);
+        let words = 0;
+        for (const r of rows) words += (r.text || "").trim().split(/\s+/).filter(Boolean).length;
+        return { words, dictations: rows.length };
+      } catch {
+        return { words: 0, dictations: 0 };
+      }
+    };
+    const toDb = (d) => d.toISOString().replace("T", " ");
+    const now = new Date();
+    const startOfDay = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+    const startOfMonth = new Date(now.getFullYear(), now.getMonth(), 1);
+    const today = countWords(toDb(startOfDay));
+    const month = countWords(toDb(startOfMonth));
+    const last24h = countWords(toDb(new Date(now.getTime() - 864e5)));
+
+    // Words per billed second, learned from this PC's own last 24 h when there is
+    // enough data; otherwise ~2 words/s (normal speech, with short-clip padding).
+    const perSecond =
+      stt.day.seconds >= 60 && last24h.words > 0 ? last24h.words / stt.day.seconds : 2.0;
+    const wordsPerRequest =
+      stt.day.requests >= 3 && last24h.dictations > 0 ? last24h.words / last24h.dictations : 25;
+    const limits = GROQ_LIMITS.stt;
+    const secondsLeft = Math.max(0, limits.audioPerDay - stt.day.seconds);
+    const requestsLeft = Math.max(0, limits.rpd - stt.day.requests);
+    const leftToday = Math.round(Math.min(secondsLeft * perSecond, requestsLeft * wordsPerRequest));
+    const fullDay = Math.round(Math.min(limits.audioPerDay * perSecond, limits.rpd * wordsPerRequest));
+    const daysInMonth = new Date(now.getFullYear(), now.getMonth() + 1, 0).getDate();
+    const daysAfterToday = daysInMonth - now.getDate();
+    return {
+      dictatedToday: today.words,
+      dictatedMonth: month.words,
+      leftToday,
+      leftMonth: leftToday + daysAfterToday * fullDay,
+      fullDay,
+      perSecond: Math.round(perSecond * 100) / 100,
+      wordsPerRequest: Math.round(wordsPerRequest),
+    };
   }
 
   // ---------- stage timings ----------

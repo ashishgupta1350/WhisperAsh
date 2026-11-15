@@ -23,6 +23,15 @@ export interface WhisperAshState {
       stt: { rpm: number; rpd: number; audioPerHour: number; audioPerDay: number };
       llm: { rpm: number; rpd: number; tpd: number };
     };
+    words?: {
+      dictatedToday: number;
+      dictatedMonth: number;
+      leftToday: number;
+      leftMonth: number;
+      fullDay: number;
+      perSecond: number;
+      wordsPerRequest: number;
+    };
   };
   lastTiming: Record<string, number | string> | null;
 }

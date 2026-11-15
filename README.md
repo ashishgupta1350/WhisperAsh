@@ -44,6 +44,8 @@ Worker. You log in with an email and password. Everything works offline and sync
 | Translate | Settings → Preferences → Language → "Hindi / Hinglish output: Translate to English", or the separate translation hotkey. |
 | Hindi + English + Hinglish | Output in **Roman Hinglish** (default, never translated), **Devanagari**, or **English**. |
 | Tray icon | Right-click the tray icon for settings and quit. |
+| Usage | Settings → Profile shows **free words left today and this month** (estimated from your own pace and Groq's free limits), plus request and audio meters. |
+| Backup engine | If Groq fails, the same recording goes to Google Gemini automatically (free key from aistudio.google.com/apikey, Settings → Profile). |
 
 ## 1. Run it on this PC
 

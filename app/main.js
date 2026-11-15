@@ -739,6 +739,21 @@ function initializeCoreManagers() {
   setupWhisperAshSync();
 }
 
+// WhisperAsh: every window (and so the taskbar button) uses the round dark icon.
+app.on("browser-window-created", (_event, win) => {
+  try {
+    const iconFile = process.platform === "win32" ? "icon.ico" : "icon.png";
+    const candidates = [
+      path.join(__dirname, "src", "assets", iconFile),
+      path.join(process.resourcesPath || "", "src", "assets", iconFile),
+    ];
+    const iconPath = candidates.find((p) => require("fs").existsSync(p));
+    if (iconPath) win.setIcon(iconPath);
+  } catch {
+    /* cosmetic only */
+  }
+});
+
 // WhisperAsh: account + Cloudflare sync, Groq usage counter and stage timings.
 let whisperashSync = null;
 function setupWhisperAshSync() {
