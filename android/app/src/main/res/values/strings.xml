@@ -1,0 +1,6 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">WhisperAsh</string>
+    <string name="ime_name">WhisperAsh voice keyboard</string>
+    <string name="ime_subtype">English, Hindi, Hinglish</string>
+</resources>
