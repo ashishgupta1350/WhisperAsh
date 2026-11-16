@@ -1,5 +1,49 @@
 # WhisperAsh
 
+## Install (Windows 10/11, 64-bit)
+
+**Download:** [WhisperAsh-Setup.exe](https://github.com/ashishgupta1350/WhisperAsh/releases/latest/download/WhisperAsh-Setup.exe)
+(about 161 MB; all versions on the [Releases page](https://github.com/ashishgupta1350/WhisperAsh/releases)).
+
+1. **Turn off Smart App Control** (WhisperAsh is not code-signed, so Windows blocks it otherwise):
+   Windows Security → App & browser control → Smart App Control → **Off**.
+2. Run `WhisperAsh-Setup.exe`. If Windows shows "Windows protected your PC", click **More info → Run anyway**.
+   Click through the installer. WhisperAsh appears in the Start menu and on the Desktop and starts in the tray.
+3. **Groq key (free, required):** sign in at <https://console.groq.com> → API Keys → Create API Key (starts
+   with `gsk_`). In WhisperAsh: **Settings → Speech to Text** → paste it into **API Key**.
+4. **Dictate:** click in any text box, **tap Right Ctrl**, speak, and tap Right Ctrl again (or hold Right Ctrl
+   while speaking, then release). The cleaned text is pasted at the cursor.
+5. **Optional:**
+   * Sync between PCs: **Settings → Profile**. The sync server URL is pre-filled. Enter your email and a
+     password, then click **Create account**. A new account needs a sign-up code from the WhisperAsh owner.
+     On your other PCs, use **Log in** instead.
+   * Backup engine: a free Gemini key from <https://aistudio.google.com/apikey> in **Settings → Profile →
+     Backup engine (Gemini)**.
+
+### For AI agents installing WhisperAsh
+
+Unattended install for the current Windows user (no admin rights needed). Run in Windows PowerShell:
+
+```powershell
+$setup = Join-Path $env:TEMP 'WhisperAsh-Setup.exe'
+Invoke-WebRequest -Uri 'https://github.com/ashishgupta1350/WhisperAsh/releases/latest/download/WhisperAsh-Setup.exe' -OutFile $setup
+Start-Process -FilePath $setup -ArgumentList '/S' -Wait
+Start-Process -FilePath (Join-Path $env:LOCALAPPDATA 'Programs\WhisperAsh\WhisperAsh.exe')
+```
+
+* **Installs to:** `%LOCALAPPDATA%\Programs\WhisperAsh\WhisperAsh.exe`, with shortcuts in the Start menu
+  and on the Desktop.
+* **User data:** `%APPDATA%\WhisperAsh` (settings, history, encrypted keys, logs).
+* **Uninstall:** Windows Settings → Apps → Installed apps → WhisperAsh → Uninstall.
+* **What the agent can't do:** turning off Smart App Control (a Windows security setting) and pasting the
+  Groq key must be done by the user. Never put the key in a command line or a file.
+* **Verify the download** (v1.0.0): SHA-256
+  `756F165262FC7F3948FC32745B6482DB2BF63AA3A6E331C34E0BCADFD6C7C3E7`, size 169,050,678 bytes, e.g.
+  `(Get-FileHash $setup -Algorithm SHA256).Hash`.
+* **Build from source instead:** see "Run it on this PC" and "Install on a second PC" below.
+
+---
+
 Personal voice dictation for Windows, in the style of Typeless. Press a hotkey in any app and speak
 English, Hindi or Hinglish. WhisperAsh transcribes the speech with Groq Whisper and cleans it up
 with a Groq LLM, which removes "um / uh", fixes punctuation and grammar, and handles self-corrections
