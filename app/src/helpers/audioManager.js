@@ -19,6 +19,7 @@ import {
 import {
   getHindiScriptPreference,
   getHindiWhisperBias,
+  getWhisperLanguageFor,
   isShortCleanUtterance,
 } from "../utils/hindiScript";
 import {
@@ -4130,7 +4131,11 @@ registerProcessor("pcm-streaming-processor", PCMStreamingProcessor);
     const timings = {};
     let requestController = null;
     const apiSettings = getSettings();
-    const language = getBaseLanguageCode(this.getEffectiveSttLanguage(apiSettings));
+    // WhisperAsh: Hindi/Hinglish output script decides Whisper's language (see hindiScript.js).
+    const language =
+      !this.translationRequested && apiSettings.cloudTranscriptionProvider === "groq"
+        ? getWhisperLanguageFor(getBaseLanguageCode(this.getEffectiveSttLanguage(apiSettings)) || "auto")
+        : getBaseLanguageCode(this.getEffectiveSttLanguage(apiSettings));
     const allowLocalFallback = apiSettings.allowLocalFallback;
     const fallbackModel = apiSettings.fallbackWhisperModel || "base";
 
@@ -4688,7 +4693,8 @@ registerProcessor("pcm-streaming-processor", PCMStreamingProcessor);
       const result = await window.electronAPI.proxyGeminiTranscription({
         audioBuffer: await audioBlob.arrayBuffer(),
         model: "gemini-3.5-transcribe",
-        language: language && language !== "auto" ? language : undefined,
+        // Gemini auto-detects; a forced "en" (used for Groq Hinglish) could make it translate.
+        language: language && language !== "auto" && language !== "en" ? language : undefined,
         keyterms: this.getKeyterms?.() || [],
       });
       const sttMs = Math.round(performance.now() - started);

@@ -17,6 +17,9 @@ const path = require("path");
 const Database = require("better-sqlite3");
 const debugLogger = require("./debugLogger");
 
+// Default WhisperAsh sync server (the owner's Cloudflare Worker). Users can
+// change it in Settings > Profile to point at their own Worker.
+const DEFAULT_SERVER_URL = "https://whisperash-sync.whisperash-ashish.workers.dev";
 const SYNC_INTERVAL_MS = 3 * 60 * 1000;
 const DEBOUNCE_MS = 4000;
 const PUSH_BATCH = 200;
@@ -65,6 +68,7 @@ class WhisperAshSync {
       );
     `);
     this.config = this._readConfig();
+    if (!this.config.serverUrl) this.config.serverUrl = DEFAULT_SERVER_URL;
     this.timer = null;
     this.debounce = null;
     this.running = null;

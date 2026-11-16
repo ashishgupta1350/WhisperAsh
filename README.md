@@ -129,8 +129,10 @@ You do this once. Your PCs then all log in to the same Worker.
    ```
 
    It prints your Worker URL, for example `https://whisperash-sync.<your-subdomain>.workers.dev`.
-8. In WhisperAsh, open **Settings → Profile**. Paste the Worker URL and enter your email, a
-   password (8+ characters) and the sign-up code, then click **Create account**.
+8. In WhisperAsh, open **Settings → Profile**. The sync server URL is pre-filled with the default
+   (`DEFAULT_SERVER_URL` in `app/src/helpers/whisperashSync.js`; change it there, or in the box,
+   if you deploy your own Worker). Enter your email, a password (8+ characters) and the sign-up code,
+   then click **Create account**.
 
 **What the Worker stores:** your email; your password as a PBKDF2-SHA256 hash (100,000 iterations,
 per-user salt, server-side pepper), never the password itself; and session tokens as SHA-256
@@ -177,7 +179,7 @@ $env:SIGNUP_CODE = 'local-test-code'; node test/api.test.mjs
    ```
 
 4. In WhisperAsh: paste your Groq key (Settings → Speech to Text), then open Settings → Profile,
-   enter the same Worker URL, email and password, and click **Log in**. History, dictionary and
+   check the sync server URL (pre-filled), enter your email and password, and click **Log in**. History, dictionary and
    settings download within a few seconds.
 
 The Groq key is entered per PC on purpose: it is never uploaded to Cloudflare. Settings that

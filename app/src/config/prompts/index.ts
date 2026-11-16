@@ -2,7 +2,11 @@ import i18n, { normalizeUiLanguage } from "../../i18n";
 import { useSettingsStore } from "../../stores/settingsStore";
 import { en as enPrompts } from "../../locales/prompts";
 import { getLanguageInstruction } from "../../utils/languageSupport";
-import { getHindiCleanupInstruction, hindiRulesApply } from "../../utils/hindiScript";
+import {
+  getHindiCleanupInstruction,
+  hindiRuleGoesFirst,
+  hindiRulesApply,
+} from "../../utils/hindiScript";
 import { splitSharedDictionaryWords } from "../../utils/snippets";
 import { PROMPT_KINDS, PLAIN_TEXT_RESPONSE_SUFFIX, type PromptKind } from "./registry";
 
@@ -88,10 +92,18 @@ function applySubstitutions(template: string, opts: ResolvePromptOptions): strin
   }
 
   // WhisperAsh: Hindi / Hinglish / auto get the script rule (Roman, Devanagari or English).
-  const langInstruction = hindiRulesApply(opts.language)
-    ? getHindiCleanupInstruction()
-    : getLanguageInstruction(opts.language);
-  if (langInstruction) prompt += "\n\n" + langInstruction;
+  const hindi = hindiRulesApply(opts.language);
+  const langInstruction = hindi ? getHindiCleanupInstruction() : getLanguageInstruction(opts.language);
+  if (langInstruction && hindi && hindiRuleGoesFirst()) {
+    // Rule first (read before the English-centric rules), plus a closing reminder.
+    prompt =
+      langInstruction +
+      "\n\n" +
+      prompt +
+      "\n\nREMINDER: never translate. Hindi stays Hindi (in the script chosen above), English stays English.";
+  } else if (langInstruction) {
+    prompt += "\n\n" + langInstruction;
+  }
 
   return appendDictionarySuffix(prompt, opts.customDictionary, opts.uiLanguage);
 }

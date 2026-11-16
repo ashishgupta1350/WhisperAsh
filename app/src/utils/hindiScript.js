@@ -45,19 +45,35 @@ export function getHindiCleanupInstruction(preference = getHindiScriptPreference
     );
   }
   return (
-    "LANGUAGE AND SCRIPT: The speaker may mix Hindi and English (Hinglish). Write Hindi words in Roman (Latin) " +
-    "script the way people type Hinglish in chats, e.g. \"Kal meeting hai, main report bhej dunga.\" Keep English " +
-    "words in normal English spelling. If the transcript contains Devanagari, transliterate it to Roman script. " +
-    "Never translate Hindi to English or English to Hindi: keep every word in the language it was spoken in. " +
-    COMMON
+    "LANGUAGE AND SCRIPT (most important rule; it overrides everything below): The speaker mixes Hindi and " +
+    "English (Hinglish). NEVER TRANSLATE. Every Hindi word stays Hindi, written in Roman (Latin) letters the way " +
+    "people type Hinglish in chats; every English word stays English. Hindi output must still be Hindi you can " +
+    "read aloud word for word, not an English paraphrase. If the transcript contains Devanagari, transliterate it " +
+    "to Roman letters; English words written phonetically in Devanagari (e.g. इंग्लिश, यू कैन यूज़) go back to normal English " +
+    "spelling (English, you can use). " +
+    COMMON +
+    "\nHINGLISH EXAMPLES:\n" +
+    "Input: अपना फोन कनेक्ट कर दिया है, तो यू कैन यूज़ द फोन\n" +
+    "Output: Apna phone connect kar diya hai, toh you can use the phone.\n" +
+    "Input: मैं हिंदी में बोल रहा हूँ, बट ये इंग्लिश में क्यों translate कर रहा है?\n" +
+    "Output: Main Hindi mein bol raha hoon, but ye English mein kyon translate kar raha hai?\n" +
+    "Input: um bhai kal ki meeting cancel ho gayi hai so let's meet on friday theek hai\n" +
+    "Output: Bhai, kal ki meeting cancel ho gayi hai, so let's meet on Friday, theek hai?\n" +
+    "WRONG (translated, never do this): \"I am speaking in Hindi, but why is it translating to English?\""
   );
+}
+
+// The Hinglish rule goes first in the cleanup prompt for roman/devanagari, so the
+// model reads it before the English-centric cleanup rules and examples.
+export function hindiRuleGoesFirst(preference = getHindiScriptPreference()) {
+  return preference === "roman" || preference === "devanagari";
 }
 
 // A short example in the target script steers Whisper's own output script.
 export function getHindiWhisperBias(language, preference = getHindiScriptPreference()) {
   if (!hindiRulesApply(language)) return "";
   if (preference === "devanagari") return "हाँ, कल meeting है। मैं report भेज दूँगा।";
-  if (preference === "roman") return "Haan, kal meeting hai. Main report bhej dunga, okay?";
+  if (preference === "roman") return "Haan, kal meeting hai. Main report bhej dunga, okay? Theek hai, let's check it.";
   return "";
 }
 
@@ -88,4 +104,16 @@ export function isShortCleanUtterance(text, preference = getHindiScriptPreferenc
     return false;
   }
   return true;
+}
+
+// Whisper's language for Hindi/Hinglish speech. Tested on real Hinglish
+// recordings (2026-11-15): auto-detect picks Hindi and writes even the English
+// words in Devanagari, which the cleanup model then sometimes translates to
+// English. Forcing "en" plus the Roman example prompt makes Whisper write Roman
+// Hinglish directly (English words kept, no translation, no extra request).
+export function getWhisperLanguageFor(language, preference = getHindiScriptPreference()) {
+  if (!hindiRulesApply(language)) return language;
+  if (preference === "roman") return "en";
+  if (preference === "devanagari") return "hi";
+  return language === "auto" ? undefined : language;
 }
