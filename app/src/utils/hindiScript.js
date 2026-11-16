@@ -24,7 +24,8 @@ export function hindiRulesApply(language) {
 
 const COMMON =
   "Hindi filler words (matlab, na, haan toh, wo, yaar) are fillers only when they carry no meaning. " +
-  "Self-corrections in Hindi (\"nahi nahi\", \"matlab\", \"sorry\", \"I mean\") keep only the corrected version.";
+  "Self-corrections in Hindi (\"nahi nahi\", \"matlab\", \"sorry\", \"I mean\") keep only the corrected version." +
+  " Replies, greetings and forms of address (haan, haan bhai, arre, ji, bhai, yaar when said to someone) carry meaning: keep them.";
 
 export function getHindiCleanupInstruction(preference = getHindiScriptPreference()) {
   if (preference === "english") {
@@ -94,6 +95,7 @@ const DEVANAGARI = /[ऀ-ॿ]/;
 export function isShortCleanUtterance(text, preference = getHindiScriptPreference()) {
   const t = (text || "").trim();
   if (!t || preference === "english") return false;
+  if (ADDRESS_HINT.test(t)) return false;
   const words = t.split(/\s+/).filter(Boolean);
   if (words.length > 5) return false;
   if (FILLER_OR_CORRECTION.test(t)) return false;
@@ -116,4 +118,56 @@ export function getWhisperLanguageFor(language, preference = getHindiScriptPrefe
   if (preference === "roman") return "en";
   if (preference === "devanagari") return "hi";
   return language === "auto" ? undefined : language;
+}
+
+// ---------- WhisperAsh: spoken email / web addresses (same rules as the Android app) ----------
+export const ADDRESS_RULE =
+  "EMAIL AND WEB ADDRESSES: When the speaker dictates an email or web address, write it in standard form with no spaces: " +
+  '"at" or "at the rate" (Indian English, often misheard as "at the red") becomes @, "dot" becomes ., ' +
+  '"underscore" becomes _, "dash" or "hyphen" becomes -. Write the address in lowercase. Speech recognition often ' +
+  'squashes "at the rate" into a few stray letters stuck to the mail provider\'s name: "ravi.sharmadrejgmail.com" ' +
+  'or "ravi.sharma@rejgmail.com" is ravi.sharma@gmail.com. If an address in the Custom Dictionary sounds like it, ' +
+  "write the dictionary address exactly.";
+
+const PROVIDERS = "gmail|googlemail|yahoo|outlook|hotmail|live|icloud|proton|protonmail|rediffmail|rediff|zoho";
+const TLDS = String.raw`com|in|co\.in|org|net|io|co|edu|ai|dev|me|us|uk|co\.uk`;
+const SPOKEN_DOT = /\s*(?:\bdot\b|\.)\s*/gi;
+const SPOKEN_EMAIL = new RegExp(
+  String.raw`([A-Za-z0-9][A-Za-z0-9._%+-]*(?:\s*(?:\bdot\b|\.|\bunderscore\b|_)\s*[A-Za-z0-9_%+-]+)*)` +
+    String.raw`\s*(?:\bat the (?:rate|red|rat|right)(?: of)?\b|@|\bat\b(?=\s*(?:${PROVIDERS})\b))\s*` +
+    String.raw`([A-Za-z0-9-]+)\s*(?:\bdot\b|\.)\s*(${TLDS})\b`,
+  "gi"
+);
+const ADDRESS_HINT = new RegExp(String.raw`at the (?:rate|red|rat)|\bdot (?:com|in|org|net)\b|@|\b(?:${PROVIDERS})\b`, "i");
+
+// "ravi dot s at the rate gmail dot com" -> "ravi.s@gmail.com"; ordinary sentences are left alone.
+export function fixSpokenEmails(text) {
+  if (typeof text !== "string" || !text) return text;
+  return text.replace(SPOKEN_EMAIL, (_m, local, domain, tld) => {
+    const l = local
+      .trim()
+      .replace(/\s*\bunderscore\b\s*/gi, "_")
+      .replace(SPOKEN_DOT, ".")
+      .replace(/\s+/g, "");
+    return `${l}@${domain.trim()}.${tld.replace(SPOKEN_DOT, ".")}`.toLowerCase();
+  });
+}
+
+export function looksLikeAddress(text) {
+  return ADDRESS_HINT.test(text || "");
+}
+
+// The signed-in account email, so cleanup can spell it exactly when it is dictated.
+export function accountEmailInstruction(email) {
+  if (typeof email !== "string" || !email.includes("@")) return "";
+  return `The user's own email address is ${email}. When they dictate something that sounds like it, write it exactly.`;
+}
+
+// Roman (Hinglish) mode must never leave Devanagari behind.
+export const ROMAN_FIX_PROMPT =
+  'Transliterate every Devanagari word in the text into Roman (Latin) script, the way people type Hinglish in chats ' +
+  '("ठीक है" -> "theek hai"). Change nothing else: same words, order, punctuation and line breaks. Output only the text.';
+
+export function needsRomanFix(text, language, preference = getHindiScriptPreference()) {
+  return preference === "roman" && hindiRulesApply(language) && DEVANAGARI.test(text || "");
 }

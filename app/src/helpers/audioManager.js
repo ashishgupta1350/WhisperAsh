@@ -17,11 +17,22 @@ import {
   resolveCleanupLanguage,
 } from "../utils/chineseScript";
 import {
+  ROMAN_FIX_PROMPT,
+  fixSpokenEmails,
   getHindiScriptPreference,
   getHindiWhisperBias,
   getWhisperLanguageFor,
   isShortCleanUtterance,
+  needsRomanFix,
 } from "../utils/hindiScript";
+import { refreshAccountEmail } from "../utils/whisperashAccount";
+import {
+  checkTranscript,
+  isLongRecording,
+  pickMoreComplete,
+  wordCount,
+} from "../utils/transcriptGuard";
+import { encodeWav, joinPieces, splitAtPauses } from "../utils/audioChunks";
 import {
   createLocalSpeechGateState,
   getLocalSpeechGateDecision,
@@ -3537,10 +3548,36 @@ registerProcessor("pcm-streaming-processor", PCMStreamingProcessor);
     if (failure?.setupKey) this._shownCleanupSetupKey = failure.setupKey;
   }
 
+  // WhisperAsh: in Roman (Hinglish) mode, Devanagari left over after cleanup gets one short
+  // transliteration pass with the cleanup model. Skipped for translation and assistant output.
+  async ensureRomanScript(text, wasCancelled = neverCancelled) {
+    try {
+      if (typeof text !== "string" || this.translationRequested || this.voiceAgentRequested) return text;
+      const settings = getSettings();
+      if (!settings.useCleanupModel) return text;
+      if (!needsRomanFix(text, this.getEffectiveSttLanguage(settings))) return text;
+      const model = getEffectiveCleanupModel();
+      if (!model) return text;
+      const fixed = await this.processWithReasoningModel(text, model, null, { systemPrompt: ROMAN_FIX_PROMPT });
+      if (wasCancelled()) return text;
+      logger.logReasoning("WHISPERASH_ROMAN_FIX", { model, changed: fixed !== text });
+      return hasTextContent(fixed) ? fixed.trim() : text;
+    } catch (error) {
+      logger.warn("WhisperAsh Roman fix failed", { error: error.message }, "notes");
+      return text;
+    }
+  }
+
   async processTranscription(text, source, wasCancelled = neverCancelled) {
     try {
-      const result = await this.processTranscriptionCore(text, source, wasCancelled);
+      // WhisperAsh: the account email is a cleanup hint; spoken addresses become real ones
+      // before cleanup (so the model sees them) and after (in case cleanup was skipped).
+      await refreshAccountEmail();
+      const input = typeof text === "string" ? fixSpokenEmails(text) : text;
+      let result = await this.processTranscriptionCore(input, source, wasCancelled);
       if (wasCancelled()) return result;
+      result = fixSpokenEmails(result);
+      result = await this.ensureRomanScript(result, wasCancelled);
       return this.finalizeChineseScript(result);
     } catch (error) {
       attachTranscript(error, text);
@@ -4173,6 +4210,37 @@ registerProcessor("pcm-streaming-processor", PCMStreamingProcessor);
       const apiKey = managedResolution ? null : await this.getAPIKey();
       const optimizedAudio = audioBlob;
 
+      // WhisperAsh: Whisper skips stretches of long audio and can loop on its prompt (see
+      // transcriptGuard.js), so recordings of 30 s or more are cut at pauses into ~25 s pieces,
+      // transcribed in parallel on Groq and joined. Only a Groq key is needed.
+      const whisperAshGroq =
+        !managedResolution &&
+        provider === "groq" &&
+        !isSelfHostedTranscription(apiSettings) &&
+        !this.translationRequested &&
+        !this.voiceAgentRequested;
+      if (whisperAshGroq && apiKey && isLongRecording(durationSeconds)) {
+        const apiCallStart = performance.now();
+        const pieced = await this._whisperAshInPieces(audioBlob, {
+          model,
+          language,
+          endpoint: this.getTranscriptionEndpoint(route),
+          headers: { Authorization: `Bearer ${apiKey}` },
+          // Groq caps the prompt at 896 characters; leave room for the script example.
+          prompt: this.getWhisperPrompt(apiSettings, this.getCustomDictionaryPrompt(600)),
+          wasCancelled,
+        });
+        if (pieced && !wasCancelled()) {
+          timings.transcriptionProcessingDurationMs = Math.round(performance.now() - apiCallStart);
+          const reasoningStart = performance.now();
+          const text = await this.processTranscription(pieced, "openai", wasCancelled);
+          timings.reasoningProcessingDurationMs = Math.round(performance.now() - reasoningStart);
+          const source = (await this.isReasoningAvailable()) ? "openai-reasoned" : "openai";
+          return { success: true, text, rawText: pieced, source, timings };
+        }
+        // Splitting failed (e.g. audio could not be decoded): fall through to one request, still checked below.
+      }
+
       // Dispatch before endpoint resolution (which defaults to OpenAI and would leak
       // the key). Self-hosted wins, so a leftover proxied provider isn't diverted here.
       const proxySpec = managedResolution
@@ -4560,10 +4628,39 @@ registerProcessor("pcm-streaming-processor", PCMStreamingProcessor);
           throw dictionaryEchoError();
         }
         timings.transcriptionProcessingDurationMs = Math.round(performance.now() - apiCallStart);
-        const rawText = this.stripTrailingDictionaryEcho(
+        let rawText = this.stripTrailingDictionaryEcho(
           result.text,
           model === "orukeet-v0.1.0" || !sendsDictionary ? null : sentDictionaryPrompt
         );
+
+        // WhisperAsh: a transcript far too short for the recording, or one that loops on a word or
+        // on the prompt's example, is re-transcribed (Gemini, else Whisper Turbo without a prompt).
+        if (whisperAshGroq) {
+          const check = checkTranscript(rawText, durationSeconds, sentDictionaryPrompt || "");
+          if (check.broken) {
+            logger.warn(
+              "WhisperAsh: Whisper transcript looks incomplete; re-transcribing",
+              { reason: check.reason, words: wordCount(rawText), durationSeconds },
+              "transcription"
+            );
+            const retryText = await this._whisperAshRetranscribe(
+              audioBlob,
+              uploadAudio,
+              extension,
+              language,
+              endpoint,
+              headers,
+              wasCancelled
+            );
+            const picked = pickMoreComplete(rawText, retryText, durationSeconds);
+            logger.info(
+              "WhisperAsh: re-transcription result",
+              { reason: check.reason, before: wordCount(rawText), after: wordCount(retryText || ""), usedRetry: picked !== rawText },
+              "transcription"
+            );
+            rawText = picked;
+          }
+        }
 
         const reasoningStart = performance.now();
         const text = await this.processTranscription(rawText, "openai", wasCancelled);
@@ -4678,36 +4775,147 @@ registerProcessor("pcm-streaming-processor", PCMStreamingProcessor);
     }
   }
 
-  async _tryGeminiBackup(audioBlob, language, groqError, wasCancelled) {
+  // WhisperAsh: Gemini's transcript of the recording, or null (no key, quota used up, error).
+  async _geminiRawText(audioBlob, language, wasCancelled) {
+    const s = getSettings();
+    if (s.useLocalWhisper || s.cloudTranscriptionProvider !== "groq" || wasCancelled()) return null;
+    const hasKey = await window.electronAPI?.getGeminiKey?.();
+    if (!hasKey || !window.electronAPI?.proxyGeminiTranscription) return null;
+    const result = await window.electronAPI.proxyGeminiTranscription({
+      audioBuffer: await audioBlob.arrayBuffer(),
+      model: "gemini-3.5-transcribe",
+      // Gemini auto-detects; a forced "en" (used for Groq Hinglish) could make it translate.
+      language: language && language !== "auto" && language !== "en" ? language : undefined,
+      keyterms: this.getKeyterms?.() || [],
+    });
+    const rawText = (result?.text || "").trim();
+    return rawText && !wasCancelled() ? rawText : null;
+  }
+
+  // WhisperAsh: one Groq Whisper request for an audio file; raw text, or null on any failure.
+  async _whisperAshGroqOnce(file, filename, { model, language, prompt, endpoint, headers }) {
     try {
-      const s = getSettings();
-      if (s.useLocalWhisper || s.cloudTranscriptionProvider !== "groq" || wasCancelled()) return null;
-      const hasKey = await window.electronAPI?.getGeminiKey?.();
-      if (!hasKey || !window.electronAPI?.proxyGeminiTranscription) return null;
+      const form = new FormData();
+      form.append("file", file, filename);
+      form.append("model", model);
+      form.append("temperature", "0");
+      if (language && language !== "auto") form.append("language", language);
+      if (prompt) form.append("prompt", prompt);
+      const response = await fetch(endpoint, { method: "POST", headers, body: form });
+      if (!response.ok) {
+        logger.warn("WhisperAsh: Groq piece request failed", { status: response.status }, "transcription");
+        return null;
+      }
+      const json = await response.json();
+      return (json?.text || "").trim();
+    } catch (error) {
+      logger.warn("WhisperAsh: Groq piece request failed", { error: error?.message }, "transcription");
+      return null;
+    }
+  }
+
+  // WhisperAsh: second opinion for a broken Whisper transcript, Groq first (most users only have
+  // that key): Whisper Turbo with no prompt, then Gemini if a key is saved. Raw text or null.
+  async _whisperAshRetranscribe(audioBlob, uploadAudio, extension, language, endpoint, headers, wasCancelled) {
+    if (wasCancelled()) return null;
+    const redo = await this._whisperAshGroqRedo(uploadAudio, `audio.${extension}`, { language, endpoint, headers });
+    if (redo && !checkTranscript(redo, null).broken) return redo;
+    try {
+      const viaGemini = await this._geminiRawText(audioBlob, language, wasCancelled);
+      if (viaGemini) return viaGemini;
+    } catch (error) {
+      logger.warn("WhisperAsh: Gemini re-transcription failed", { error: error?.message }, "transcription");
+    }
+    return redo || null;
+  }
+
+  // WhisperAsh: redo on Groq without the script example (the prompt Whisper loops on):
+  // large-v3 first, then Turbo if that is broken too. Raw text or null.
+  async _whisperAshGroqRedo(file, filename, { language, endpoint, headers, seconds = null }) {
+    const v3 = await this._whisperAshGroqOnce(file, filename, { model: "whisper-large-v3", language, endpoint, headers });
+    if (v3 && !checkTranscript(v3, seconds).broken) return v3;
+    const turbo = await this._whisperAshGroqOnce(file, filename, {
+      model: "whisper-large-v3-turbo",
+      language,
+      endpoint,
+      headers,
+    });
+    if (!v3) return turbo;
+    if (!turbo) return v3;
+    return pickMoreComplete(v3, turbo, seconds);
+  }
+
+  // WhisperAsh: a long recording as ~25 s pieces cut at pauses, all sent to Groq at once and
+  // joined. A broken piece is re-done without the script example. Returns raw text or null.
+  async _whisperAshInPieces(audioBlob, { model, language, endpoint, headers, prompt, wasCancelled }) {
+    const ctx = new AudioContext();
+    try {
+      const rate = 16000;
+      const decoded = await ctx.decodeAudioData(await audioBlob.arrayBuffer());
+      const offline = new OfflineAudioContext(1, Math.ceil(decoded.duration * rate), rate);
+      const source = offline.createBufferSource();
+      source.buffer = decoded;
+      source.connect(offline.destination);
+      source.start();
+      const pcm = (await offline.startRendering()).getChannelData(0);
+      const pieces = splitAtPauses(pcm, rate);
+      logger.info(
+        "WhisperAsh: long recording split into pieces",
+        { seconds: Math.round(decoded.duration), pieces: pieces.length },
+        "transcription"
+      );
+      const texts = await Promise.all(
+        pieces.map(async ([start, end], index) => {
+          const seconds = (end - start) / rate;
+          const wav = new Blob([encodeWav(pcm.subarray(start, end), rate)], { type: "audio/wav" });
+          const name = `piece-${index + 1}.wav`;
+          let text = await this._whisperAshGroqOnce(wav, name, { model, language, prompt, endpoint, headers });
+          const check = checkTranscript(text || "", seconds, prompt || "");
+          if (text === null || check.broken) {
+            const redo = await this._whisperAshGroqRedo(wav, name, { language, endpoint, headers, seconds });
+            logger.warn(
+              "WhisperAsh: piece re-done without the script example",
+              { piece: index + 1, reason: text === null ? "request_failed" : check.reason },
+              "transcription"
+            );
+            text = text === null ? redo : pickMoreComplete(text, redo, seconds);
+          }
+          if (text === null) throw new Error(`piece ${index + 1} could not be transcribed`);
+          return text;
+        })
+      );
+      if (wasCancelled()) return null;
+      return joinPieces(texts) || null;
+    } catch (error) {
+      logger.warn("WhisperAsh: splitting into pieces failed", { error: error?.message }, "transcription");
+      return null;
+    } finally {
+      ctx.close().catch(() => {});
+    }
+  }
+
+  async _tryGeminiBackup(audioBlob, language, groqError, wasCancelled, source = "gemini-backup") {
+    try {
+      if (wasCancelled()) return null;
       logger.warn(
-        "Groq transcription failed; trying Gemini backup",
+        source === "gemini-long"
+          ? "WhisperAsh: long recording, transcribing with Gemini"
+          : "Groq transcription failed; trying Gemini backup",
         { error: groqError?.message, status: groqError?.status },
         "transcription"
       );
       const started = performance.now();
-      const result = await window.electronAPI.proxyGeminiTranscription({
-        audioBuffer: await audioBlob.arrayBuffer(),
-        model: "gemini-3.5-transcribe",
-        // Gemini auto-detects; a forced "en" (used for Groq Hinglish) could make it translate.
-        language: language && language !== "auto" && language !== "en" ? language : undefined,
-        keyterms: this.getKeyterms?.() || [],
-      });
+      const rawText = await this._geminiRawText(audioBlob, language, wasCancelled);
       const sttMs = Math.round(performance.now() - started);
-      const rawText = (result?.text || "").trim();
-      if (!rawText || wasCancelled()) return null;
+      if (!rawText) return null;
       const reasoningStart = performance.now();
-      const text = await this.processTranscription(rawText, "gemini-backup", wasCancelled);
+      const text = await this.processTranscription(rawText, source, wasCancelled);
       if (!text) return null;
       return {
         success: true,
         text,
         rawText,
-        source: "gemini-backup",
+        source,
         timings: {
           transcriptionProcessingDurationMs: sttMs,
           reasoningProcessingDurationMs: Math.round(performance.now() - reasoningStart),

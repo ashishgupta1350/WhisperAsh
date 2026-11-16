@@ -5,6 +5,11 @@ import { Button } from "./ui/button";
 import { Input } from "./ui/input";
 import { SectionHeader, SettingsPanel, SettingsPanelRow, SettingsRow } from "./ui/SettingsSection";
 import type { WhisperAshState } from "../utils/whisperashSettingsSync";
+import { useSettingsStore } from "../stores/settingsStore";
+
+// Cleanup mode, the same two choices as the Android app (synced through `cleanupModel`).
+const PRECISE_MODEL = "openai/gpt-oss-120b";
+const FASTER_MODEL = "qwen/qwen3.8-27b";
 
 function ago(ts: number | null) {
   if (!ts) return "never";
@@ -56,6 +61,8 @@ export default function WhisperAshAccountPanel() {
   const [geminiSaved, setGeminiSaved] = useState(false);
   const [geminiInput, setGeminiInput] = useState("");
   const api = (window as unknown as { electronAPI?: Record<string, (...a: unknown[]) => Promise<unknown>> }).electronAPI;
+  const cleanupModel = useSettingsStore((s) => s.cleanupModel);
+  const setCleanupModel = useSettingsStore((s) => s.setCleanupModel);
 
   useEffect(() => {
     api?.getGeminiKey?.().then((k) => setGeminiSaved(!!k));
@@ -229,6 +236,42 @@ export default function WhisperAshAccountPanel() {
       </SettingsPanel>
 
       <SectionHeader
+        title="Cleanup mode"
+        description="Faster (default) uses Qwen 3.8 27B: keeps your wording, about 0.3–0.5 s quicker. Precise uses GPT-OSS 120B: stronger on Hindi and Hinglish, but can shorten long English dictations. Each has its own free Groq allowance. Synced with your other devices."
+      />
+      <SettingsPanel>
+        <SettingsPanelRow>
+          <SettingsRow
+            label="Mode"
+            description={
+              cleanupModel === FASTER_MODEL
+                ? "Faster (Qwen 3.8 27B), the default"
+                : cleanupModel === PRECISE_MODEL
+                  ? "Precise (GPT-OSS 120B)"
+                  : `Other model: ${cleanupModel || "default"}`
+            }
+          >
+            <div className="flex gap-2">
+              <Button
+                size="sm"
+                variant={cleanupModel === FASTER_MODEL ? "default" : "outline"}
+                onClick={() => setCleanupModel(FASTER_MODEL)}
+              >
+                Faster (default)
+              </Button>
+              <Button
+                size="sm"
+                variant={cleanupModel === PRECISE_MODEL ? "default" : "outline"}
+                onClick={() => setCleanupModel(PRECISE_MODEL)}
+              >
+                Precise
+              </Button>
+            </div>
+          </SettingsRow>
+        </SettingsPanelRow>
+      </SettingsPanel>
+
+      <SectionHeader
         title="Groq free-tier usage (this PC)"
         description="Counted locally. Each Whisper request is billed as at least 10 seconds of audio. Limits from console.groq.com/docs/rate-limits."
       />
@@ -269,6 +312,26 @@ export default function WhisperAshAccountPanel() {
               <Meter label="Audio, last 24 h" used={usage.stt.day.seconds} limit={usage.limits.stt.audioPerDay} unit=" s" />
               <Meter label="Cleanup requests, last 24 h" used={usage.llm.day.requests} limit={usage.limits.llm.rpd} />
               <Meter label="Cleanup tokens, last 24 h" used={usage.llm.day.tokens} limit={usage.limits.llm.tpd} />
+              {(() => {
+                // The daily token cap runs out long before the 1,000 requests: each cleanup sends the
+                // whole instructions. Counted over every model this PC used (each has its own cap).
+                const perCleanup =
+                  usage.llm.day.requests >= 3 ? Math.round(usage.llm.day.tokens / usage.llm.day.requests) : 800;
+                const left = Math.max(
+                  0,
+                  Math.min(
+                    Math.floor((usage.limits.llm.tpd - usage.llm.day.tokens) / perCleanup),
+                    usage.limits.llm.rpd - usage.llm.day.requests
+                  )
+                );
+                return (
+                  <div className="text-xs text-muted-foreground">
+                    Cleanups left today: about {left.toLocaleString()} (~{perCleanup.toLocaleString()} tokens each). The
+                    limits refill gradually over a rolling 24 hours; when one model runs out, GPT-OSS 20B and then the raw
+                    transcript take over.
+                  </div>
+                );
+              })()}
             </div>
           </SettingsPanelRow>
         ) : null}
