@@ -37,8 +37,8 @@ Start-Process -FilePath (Join-Path $env:LOCALAPPDATA 'Programs\WhisperAsh\Whispe
 * **Uninstall:** Windows Settings → Apps → Installed apps → WhisperAsh → Uninstall.
 * **What the agent can't do:** turning off Smart App Control (a Windows security setting) and pasting the
   Groq key must be done by the user. Never put the key in a command line or a file.
-* **Verify the download** (v1.0.0): SHA-256
-  `756F165262FC7F3948FC32745B6482DB2BF63AA3A6E331C34E0BCADFD6C7C3E7`, size 169,050,678 bytes, e.g.
+* **Verify the download** (v1.0.1): SHA-256
+  `65CD697E29FD85E7A2007483DBBB098989B3440A13B5D2E16889C4E2437BDE27`, size 169,068,176 bytes, e.g.
   `(Get-FileHash $setup -Algorithm SHA256).Hash`.
 * **Build from source instead:** see "Run it on this PC" and "Install on a second PC" below.
 
