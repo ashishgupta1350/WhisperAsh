@@ -484,23 +484,113 @@ class WhisperAshSync {
   }
 
   // ---------- Groq usage counter ----------
-  recordUsage({ kind, audioSeconds = 0, tokens = 0, model = null }) {
+  // Cleanup rows carry Groq's real token count (from the API response) and,
+  // for both kinds, Groq's own x-ratelimit-*-requests headers when present.
+  _ensureUsageColumns() {
+    if (this._usageColumnsReady) return;
+    for (const col of ["remaining_requests INTEGER", "limit_requests INTEGER"]) {
+      try {
+        this.db.exec(`ALTER TABLE usage_events ADD COLUMN ${col}`);
+      } catch {
+        /* already there */
+      }
+    }
+    this._usageColumnsReady = true;
+  }
+
+  // Called by main.js for every completed Groq chat/transcription request.
+  noteGroqHeaders(details) {
+    try {
+      if (details.statusCode !== 200) return;
+      const h = {};
+      for (const [k, v] of Object.entries(details.responseHeaders || {})) {
+        h[k.toLowerCase()] = Array.isArray(v) ? v[0] : v;
+      }
+      const num = (k) => (h[k] != null && Number.isFinite(Number(h[k])) ? Number(h[k]) : null);
+      const kind = String(details.url).includes("/audio/transcriptions") ? "stt" : "llm";
+      this._pendingGroq = this._pendingGroq || {};
+      this._pendingGroq[kind] = {
+        at: Date.now(),
+        remainingRequests: num("x-ratelimit-remaining-requests"),
+        limitRequests: num("x-ratelimit-limit-requests"),
+        remainingAudioSeconds: num("x-ratelimit-remaining-audio-seconds"),
+        limitAudioSeconds: num("x-ratelimit-limit-audio-seconds"),
+      };
+      if (kind === "stt") this._latestSttAudio = this._pendingGroq.stt;
+    } catch {
+      /* best effort */
+    }
+  }
+
+  recordUsage({ kind, audioSeconds = 0, tokens = 0, model = null, remainingRequests = null, limitRequests = null }) {
     if (kind !== "stt" && kind !== "llm") return;
+    this._ensureUsageColumns();
+    // Headers captured by the main process for the same request (within 30 s).
+    const pending = this._pendingGroq?.[kind];
+    if (pending && Date.now() - pending.at < 30000) {
+      if (remainingRequests == null) remainingRequests = pending.remainingRequests;
+      if (limitRequests == null) limitRequests = pending.limitRequests;
+      this._pendingGroq[kind] = null;
+    }
     const billed = kind === "stt" ? Math.max(GROQ_LIMITS.stt.minBilledSeconds, Math.ceil(audioSeconds)) : 0;
+    const int = (v) => (Number.isFinite(Number(v)) && v !== null ? Math.round(Number(v)) : null);
     this.db
-      .prepare("INSERT INTO usage_events (ts, kind, billed_seconds, tokens, model) VALUES (?, ?, ?, ?, ?)")
-      .run(Date.now(), kind, billed, Math.round(tokens), model);
+      .prepare(
+        "INSERT INTO usage_events (ts, kind, billed_seconds, tokens, model, remaining_requests, limit_requests) VALUES (?, ?, ?, ?, ?, ?, ?)"
+      )
+      .run(Date.now(), kind, billed, Math.round(Number(tokens) || 0), model, int(remainingRequests), int(limitRequests));
     this.db.prepare("DELETE FROM usage_events WHERE ts < ?").run(Date.now() - 2 * 864e5);
   }
 
   getUsage() {
+    this._ensureUsageColumns();
     const now = Date.now();
+    const dayAgo = now - 864e5;
     const q = this.db.prepare(
       "SELECT COUNT(*) AS requests, COALESCE(SUM(billed_seconds),0) AS seconds, COALESCE(SUM(tokens),0) AS tokens FROM usage_events WHERE kind = ? AND ts >= ?"
     );
-    const stt = { minute: q.get("stt", now - 60e3), hour: q.get("stt", now - 3600e3), day: q.get("stt", now - 864e5) };
-    const llm = { minute: q.get("llm", now - 60e3), day: q.get("llm", now - 864e5) };
-    return { stt, llm, limits: GROQ_LIMITS, words: this._wordAllowance(stt) };
+    const stt = { minute: q.get("stt", now - 60e3), hour: q.get("stt", now - 3600e3), day: q.get("stt", dayAgo) };
+    // Cleanup rows from before real Groq token counts were estimates (and also
+    // counted skipped cleanups), so cleanup totals start at usageRealSince.
+    if (!this.config.usageRealSince) {
+      this.config.usageRealSince = now;
+      this._writeConfig();
+    }
+    const llmSince = Math.max(dayAgo, this.config.usageRealSince);
+    const llm = { minute: q.get("llm", Math.max(now - 60e3, llmSince)), day: q.get("llm", llmSince), since: llmSince };
+
+    // Each Groq model has its own daily allowance, so cleanup usage is per model.
+    // "groq" holds Groq's own latest remaining/limit headers for that model, which
+    // also include any other device using the same Groq key.
+    const latest = this.db.prepare(
+      `SELECT remaining_requests AS remaining, limit_requests AS lim, ts FROM usage_events
+       WHERE kind = ? AND model = ? AND remaining_requests IS NOT NULL AND ts >= ? ORDER BY ts DESC LIMIT 1`
+    );
+    const llmModels = this.db
+      .prepare(
+        `SELECT model, COUNT(*) AS requests, COALESCE(SUM(tokens),0) AS tokens FROM usage_events
+         WHERE kind = 'llm' AND ts >= ? AND model IS NOT NULL GROUP BY model ORDER BY tokens DESC`
+      )
+      .all(llmSince)
+      .map((m) => ({ ...m, groq: latest.get("llm", m.model, llmSince) || null }));
+    const sttModel = this.db
+      .prepare("SELECT model FROM usage_events WHERE kind = 'stt' AND ts >= ? AND model IS NOT NULL ORDER BY ts DESC LIMIT 1")
+      .get(dayAgo)?.model;
+    const sttGroq = sttModel ? latest.get("stt", sttModel, dayAgo) || null : null;
+    return {
+      stt: {
+        ...stt,
+        groq: sttGroq,
+        model: sttModel || null,
+        groqAudioHour:
+          this._latestSttAudio && now - this._latestSttAudio.at < 3600e3 && this._latestSttAudio.remainingAudioSeconds != null
+            ? { remaining: this._latestSttAudio.remainingAudioSeconds, lim: this._latestSttAudio.limitAudioSeconds }
+            : null,
+      },
+      llm: { ...llm, models: llmModels },
+      limits: GROQ_LIMITS,
+      words: this._wordAllowance(stt),
+    };
   }
 
   // "Free words left": Groq's free limits are per rolling 24 h (audio seconds

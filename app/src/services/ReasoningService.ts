@@ -526,6 +526,26 @@ class ReasoningService extends BaseReasoningService {
 
         const jsonResponse = await res.json();
 
+        // WhisperAsh: record Groq's real token count and its own "requests left
+        // today" header for the usage panel (only calls that actually ran count).
+        if (providerName === "Groq") {
+          try {
+            const header = (name: string) => {
+              const v = res.headers.get(name);
+              return v != null && v !== "" && Number.isFinite(Number(v)) ? Number(v) : null;
+            };
+            (window as unknown as { whisperash?: { recordUsage?: (u: unknown) => void } }).whisperash?.recordUsage?.({
+              kind: "llm",
+              model,
+              tokens: Number(jsonResponse?.usage?.total_tokens) || 0,
+              remainingRequests: header("x-ratelimit-remaining-requests"),
+              limitRequests: header("x-ratelimit-limit-requests"),
+            });
+          } catch {
+            /* usage counter is best effort */
+          }
+        }
+
         logger.logReasoning(`${providerName.toUpperCase()}_RAW_RESPONSE`, {
           hasResponse: !!jsonResponse,
           responseKeys: jsonResponse ? Object.keys(jsonResponse) : [],

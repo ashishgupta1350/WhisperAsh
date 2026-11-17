@@ -799,6 +799,17 @@ function setupWhisperAshSync() {
     ipcMain.on("whisperash-record-settings", (_e, values) => whisperashSync.recordLocalSettings(values));
     ipcMain.on("whisperash-record-usage", (_e, usage) => whisperashSync.recordUsage(usage || {}));
     ipcMain.on("whisperash-record-timing", (_e, timing) => whisperashSync.recordTiming(timing || {}));
+    // Groq's x-ratelimit-* headers aren't readable from the page (Groq doesn't
+    // expose them via CORS), so the main process reads them for the usage panel.
+    session.defaultSession.webRequest.onCompleted(
+      {
+        urls: [
+          "https://api.groq.com/openai/v1/chat/completions*",
+          "https://api.groq.com/openai/v1/audio/transcriptions*",
+        ],
+      },
+      (details) => whisperashSync.noteGroqHeaders(details)
+    );
     whisperashSync.init();
   } catch (err) {
     debugLogger.error("WhisperAsh sync failed to start", { error: err.message });

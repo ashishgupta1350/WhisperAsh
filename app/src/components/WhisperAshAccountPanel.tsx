@@ -310,28 +310,49 @@ export default function WhisperAshAccountPanel() {
               <Meter label="Whisper requests, last 24 h" used={usage.stt.day.requests} limit={usage.limits.stt.rpd} />
               <Meter label="Audio, last hour" used={usage.stt.hour.seconds} limit={usage.limits.stt.audioPerHour} unit=" s" />
               <Meter label="Audio, last 24 h" used={usage.stt.day.seconds} limit={usage.limits.stt.audioPerDay} unit=" s" />
-              <Meter label="Cleanup requests, last 24 h" used={usage.llm.day.requests} limit={usage.limits.llm.rpd} />
-              <Meter label="Cleanup tokens, last 24 h" used={usage.llm.day.tokens} limit={usage.limits.llm.tpd} />
-              {(() => {
-                // The daily token cap runs out long before the 1,000 requests: each cleanup sends the
-                // whole instructions. Counted over every model this PC used (each has its own cap).
-                const perCleanup =
-                  usage.llm.day.requests >= 3 ? Math.round(usage.llm.day.tokens / usage.llm.day.requests) : 800;
-                const left = Math.max(
-                  0,
-                  Math.min(
-                    Math.floor((usage.limits.llm.tpd - usage.llm.day.tokens) / perCleanup),
-                    usage.limits.llm.rpd - usage.llm.day.requests
-                  )
-                );
+              {usage.stt.groq ? (
+                <div className="text-xs text-muted-foreground">
+                  Groq reports {usage.stt.groq.remaining.toLocaleString()}
+                  {usage.stt.groq.lim ? ` of ${usage.stt.groq.lim.toLocaleString()}` : ""} transcription requests left
+                  today ({usage.stt.model})
+                  {usage.stt.groqAudioHour
+                    ? `, and ${usage.stt.groqAudioHour.remaining.toLocaleString()} audio seconds left this hour`
+                    : ""}
+                  .
+                </div>
+              ) : null}
+              {(usage.llm.models || []).length === 0 ? (
+                <div className="text-xs text-muted-foreground">No cleanups in the last 24 hours.</div>
+              ) : null}
+              {(usage.llm.models || []).map((m) => {
+                // Real tokens from Groq's responses; each model has its own daily allowance.
+                const perCleanup = m.requests > 0 ? Math.max(1, Math.round(m.tokens / m.requests)) : 0;
+                const byTokens = perCleanup ? Math.floor((usage.limits.llm.tpd - m.tokens) / perCleanup) : 0;
+                const byRequests = m.groq ? m.groq.remaining : usage.limits.llm.rpd - m.requests;
+                const left = Math.max(0, Math.min(byTokens, byRequests));
                 return (
-                  <div className="text-xs text-muted-foreground">
-                    Cleanups left today: about {left.toLocaleString()} (~{perCleanup.toLocaleString()} tokens each). The
-                    limits refill gradually over a rolling 24 hours; when one model runs out, GPT-OSS 20B and then the raw
-                    transcript take over.
+                  <div key={m.model} className="space-y-1">
+                    <Meter label={`Cleanup tokens, last 24 h (${m.model})`} used={m.tokens} limit={usage.limits.llm.tpd} />
+                    <div className="text-xs text-muted-foreground">
+                      {m.requests.toLocaleString()} cleanups, ~{perCleanup.toLocaleString()} tokens each. About{" "}
+                      {left.toLocaleString()} more cleanups left today on this model
+                      {m.groq ? ` (Groq reports ${m.groq.remaining.toLocaleString()} requests left)` : ""}.
+                    </div>
                   </div>
                 );
-              })()}
+              })}
+              {usage.llm.since && Date.now() - usage.llm.since < 864e5 ? (
+                <div className="text-[11px] text-muted-foreground">
+                  Cleanup totals count real Groq numbers since{" "}
+                  {new Date(usage.llm.since).toLocaleString([], { dateStyle: "medium", timeStyle: "short" })} (earlier
+                  figures were estimates), so they cover less than 24 hours until then.
+                </div>
+              ) : null}
+              <div className="text-[11px] text-muted-foreground">
+                Token counts are Groq's own, recorded on this PC; Groq's "requests left" also counts other devices using
+                the same key. Limits refill gradually over a rolling 24 hours. If a cleanup model runs out, GPT-OSS 20B and
+                then the raw transcript take over.
+              </div>
             </div>
           </SettingsPanelRow>
         ) : null}
