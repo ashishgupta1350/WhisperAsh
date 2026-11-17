@@ -24,8 +24,20 @@ data class HistoryItem(
     val app: String?,
 )
 
+/** A note in the Notes tab: title + bullet body, the original words kept in [raw]. */
+data class Note(
+    val id: String,
+    val title: String,
+    val body: String,
+    val raw: String,
+    val prevBody: String?,
+    val pinned: Boolean,
+    val createdMs: Long,
+    val updatedMs: Long,
+)
+
 /** Local store. Every syncable row has updated_at (ms) + dirty + deleted, last write wins. */
-class Db(context: Context) : SQLiteOpenHelper(context, "whisperash.db", null, 1) {
+class Db(context: Context) : SQLiteOpenHelper(context, "whisperash.db", null, 2) {
 
     override fun onCreate(db: SQLiteDatabase) {
         db.execSQL(
@@ -46,9 +58,121 @@ class Db(context: Context) : SQLiteOpenHelper(context, "whisperash.db", null, 1)
         )
         db.execSQL("CREATE INDEX usage_ts ON usage_events(ts)")
         db.execSQL("CREATE TABLE timings (ts INTEGER NOT NULL, data TEXT NOT NULL)")
+        createNotes(db)
     }
 
-    override fun onUpgrade(db: SQLiteDatabase, oldVersion: Int, newVersion: Int) {}
+    override fun onUpgrade(db: SQLiteDatabase, oldVersion: Int, newVersion: Int) {
+        if (oldVersion < 2) createNotes(db)
+    }
+
+    private fun createNotes(db: SQLiteDatabase) {
+        db.execSQL(
+            """CREATE TABLE IF NOT EXISTS notes (
+                id TEXT PRIMARY KEY, title TEXT NOT NULL, body TEXT NOT NULL, raw TEXT NOT NULL DEFAULT '',
+                prev_body TEXT, pinned INTEGER NOT NULL DEFAULT 0, created_ms INTEGER NOT NULL,
+                updated_at INTEGER NOT NULL, deleted INTEGER NOT NULL DEFAULT 0, dirty INTEGER NOT NULL DEFAULT 0)"""
+        )
+    }
+
+    // ---------- notes ----------
+    fun notes(query: String = ""): List<Note> {
+        val args = mutableListOf<String>()
+        var where = "deleted = 0"
+        if (query.isNotBlank()) {
+            where += " AND (title LIKE ? OR body LIKE ? OR raw LIKE ?)"
+            val q = "%${query.trim()}%"
+            args += listOf(q, q, q)
+        }
+        val out = ArrayList<Note>()
+        readableDatabase.query("notes", null, where, args.toTypedArray(), null, null, "pinned DESC, updated_at DESC").use { c ->
+            while (c.moveToNext()) out += readNote(c)
+        }
+        return out
+    }
+
+    fun note(id: String): Note? =
+        readableDatabase.query("notes", null, "id = ? AND deleted = 0", arrayOf(id), null, null, null).use { c ->
+            if (c.moveToFirst()) readNote(c) else null
+        }
+
+    private fun readNote(c: android.database.Cursor) = Note(
+        c.getString(c.getColumnIndexOrThrow("id")),
+        c.getString(c.getColumnIndexOrThrow("title")),
+        c.getString(c.getColumnIndexOrThrow("body")),
+        c.getString(c.getColumnIndexOrThrow("raw")),
+        c.getString(c.getColumnIndexOrThrow("prev_body")),
+        c.getInt(c.getColumnIndexOrThrow("pinned")) == 1,
+        c.getLong(c.getColumnIndexOrThrow("created_ms")),
+        c.getLong(c.getColumnIndexOrThrow("updated_at")),
+    )
+
+    /** Inserts or updates a note (marks it for upload). */
+    fun saveNote(n: Note): Note {
+        val now = System.currentTimeMillis()
+        val saved = n.copy(updatedMs = now)
+        writableDatabase.insertWithOnConflict("notes", null, ContentValues().apply {
+            put("id", saved.id); put("title", saved.title); put("body", saved.body); put("raw", saved.raw)
+            put("prev_body", saved.prevBody); put("pinned", if (saved.pinned) 1 else 0); put("created_ms", saved.createdMs)
+            put("updated_at", now); put("deleted", 0); put("dirty", 1)
+        }, SQLiteDatabase.CONFLICT_REPLACE)
+        return saved
+    }
+
+    fun deleteNote(id: String) {
+        writableDatabase.execSQL(
+            "UPDATE notes SET deleted = 1, dirty = 1, updated_at = ? WHERE id = ?",
+            arrayOf<Any?>(System.currentTimeMillis(), id)
+        )
+    }
+
+    fun dirtyNotes(limit: Int): List<Outgoing> {
+        val out = ArrayList<Outgoing>()
+        readableDatabase.rawQuery(
+            "SELECT id, title, body, raw, pinned, created_ms, updated_at, deleted FROM notes WHERE dirty = 1 LIMIT ?",
+            arrayOf(limit.toString())
+        ).use { c ->
+            while (c.moveToNext()) {
+                val deleted = c.getInt(7) == 1
+                val data = if (deleted) JSONObject() else JSONObject().apply {
+                    put("title", c.getString(1)); put("body", c.getString(2)); put("raw", c.getString(3))
+                    put("pinned", c.getInt(4) == 1); put("created_ms", c.getLong(5))
+                }
+                out += Outgoing("notes", c.getString(0), c.getLong(6), deleted, data)
+            }
+        }
+        return out
+    }
+
+    fun markNotesClean(items: List<Outgoing>) {
+        for (it in items) writableDatabase.execSQL(
+            "UPDATE notes SET dirty = 0 WHERE id = ? AND updated_at = ?", arrayOf<Any?>(it.id, it.updatedAt)
+        )
+    }
+
+    fun applyRemoteNote(id: String, updatedAt: Long, deleted: Boolean, data: JSONObject): Boolean {
+        val db = writableDatabase
+        db.rawQuery("SELECT updated_at, dirty FROM notes WHERE id = ?", arrayOf(id)).use { c ->
+            if (c.moveToFirst()) {
+                val localTs = c.getLong(0)
+                val dirty = c.getInt(1) == 1
+                if (dirty && localTs > updatedAt) return false
+                if (!dirty && localTs >= updatedAt) return false
+            } else if (deleted) return false
+        }
+        if (deleted) {
+            db.execSQL("UPDATE notes SET deleted = 1, dirty = 0, updated_at = ? WHERE id = ?", arrayOf<Any?>(updatedAt, id))
+        } else {
+            db.insertWithOnConflict("notes", null, ContentValues().apply {
+                put("id", id); put("title", data.optString("title", "")); put("body", data.optString("body", ""))
+                put("raw", data.optString("raw", "")); put("pinned", if (data.optBoolean("pinned", false)) 1 else 0)
+                put("created_ms", data.optLong("created_ms", updatedAt)); put("updated_at", updatedAt)
+                put("deleted", 0); put("dirty", 0)
+            }, SQLiteDatabase.CONFLICT_REPLACE)
+        }
+        return true
+    }
+
+    fun dirtyNoteCount(): Int = count("SELECT COUNT(*) FROM notes WHERE dirty = 1")
 
     // ---------- history ----------
     fun addHistory(

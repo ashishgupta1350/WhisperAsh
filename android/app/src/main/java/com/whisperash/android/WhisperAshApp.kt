@@ -16,6 +16,7 @@ class WhisperAshApp : Application() {
     lateinit var gemini: GeminiClient
     lateinit var sync: SyncClient
     lateinit var engine: DictationEngine
+    lateinit var notes: NoteMaker
     val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
 
     override fun onCreate() {
@@ -34,6 +35,7 @@ class WhisperAshApp : Application() {
         gemini = GeminiClient(http) { secure.get(SecureStore.GEMINI_KEY) }
         sync = SyncClient(http, settings, secure, db, scope)
         engine = DictationEngine(this)
+        notes = NoteMaker(this)
         settings.onSyncedChange = { sync.requestSync(SyncClient.Reason.CHANGE) }
     }
 

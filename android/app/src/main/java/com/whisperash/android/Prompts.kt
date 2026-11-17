@@ -284,6 +284,36 @@ OUTPUT: exactly the cleaned transcript and nothing else — no preamble, labels,
         return t
     }
 
+    data class Retention(val flagged: Boolean, val missing: Int, val content: Int, val gone: List<String>)
+
+    private val RETENTION_FILLERS = (
+        "like you know mean okay yeah yaar actually basically literally honestly right just really kind sort " +
+            "thing things stuff something well matlab yaani gonna wanna gotta that this then also with have what"
+        ).split(" ").toSet()
+
+    /**
+     * Did cleanup delete words the speaker said? Spelling fixes and dropped fillers are normal, so it only
+     * flags a real word said 3+ times that vanished completely (seen: "English" x6 deleted from a Hinglish
+     * dictation about languages), or a big cut (8+ words and a quarter of the content).
+     */
+    fun checkRetention(heard: String, cleaned: String): Retention {
+        fun words(s: String) = Regex("[\\p{L}\\p{N}]+").findAll(s.lowercase()).map { it.value }.toList()
+        val said = words(heard).filter { it.length >= 4 && it !in RETENTION_FILLERS }.groupingBy { it }.eachCount()
+        val kept = words(cleaned).toSet()
+        val goneCounts = said.filterKeys { it !in kept }
+        val missing = goneCounts.values.sum()
+        val content = said.values.sum()
+        val repeatedWordGone = goneCounts.values.any { it >= 3 }
+        val bigCut = missing >= 8 && content > 0 && missing.toDouble() / content >= 0.25
+        return Retention(repeatedWordGone || bigCut, missing, content, goneCounts.entries.sortedByDescending { it.value }.map { it.key })
+    }
+
+    /** Second try after [checkRetention] flagged a cleanup: names what went missing. */
+    fun retentionRetry(heard: String, gone: List<String>) = wrapTranscript(heard) +
+        "\n\nYour previous cleanup deleted words the speaker said (" + gone.take(12).joinToString(", ") +
+        "). Keep every word the speaker said, including language names like Hindi and English; " +
+        "only remove fillers, false starts and exact repeats."
+
     /** Whisper sometimes "hears" its own prompt (or stock phrases) in silence. */
     fun isLikelyHallucination(text: String, prompt: String, quietAudio: Boolean): Boolean {
         val t = text.trim().lowercase().trimEnd('.', '!', '?')

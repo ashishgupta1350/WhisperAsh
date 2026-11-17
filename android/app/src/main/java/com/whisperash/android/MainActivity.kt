@@ -113,14 +113,15 @@ class MainActivity : ComponentActivity() {
 
     @Composable
     private fun AppScreen() {
-        var tab by remember { mutableIntStateOf(0) }
+        // Notes first once setup is done; Home (the setup checklist) until then.
+        var tab by remember { mutableIntStateOf(if (keyboardEnabled() && app.secure.has(SecureStore.GROQ_KEY)) 1 else 0) }
         val t = tick.intValue
         val dataVersion by app.sync.dataVersion.collectAsState()
         Scaffold(
             containerColor = Bg,
             bottomBar = {
                 NavigationBar(containerColor = CardBg) {
-                    listOf("Home" to "⌂", "History" to "☰", "Words" to "Aa", "Settings" to "⚙", "Account" to "☁").forEachIndexed { i, (label, glyph) ->
+                    listOf("Home" to "⌂", "Notes" to "📝", "History" to "☰", "Words" to "Aa", "Settings" to "⚙", "Account" to "☁").forEachIndexed { i, (label, glyph) ->
                         NavigationBarItem(
                             selected = tab == i, onClick = { tab = i },
                             icon = { Text(glyph, fontSize = 18.sp) }, label = { Text(label, fontSize = 11.sp) },
@@ -132,10 +133,11 @@ class MainActivity : ComponentActivity() {
             Box(Modifier.padding(pad).fillMaxSize()) {
                 when (tab) {
                     0 -> HomeTab(t + dataVersion) { tab = it }
-                    1 -> HistoryTab(dataVersion)
-                    2 -> DictionaryTab(dataVersion)
-                    3 -> SettingsTab(dataVersion)
-                    4 -> AccountTab()
+                    1 -> NotesTab(app, dataVersion, hasMic = { hasMic() }, askMic = { askMic() })
+                    2 -> HistoryTab(dataVersion)
+                    3 -> DictionaryTab(dataVersion)
+                    4 -> SettingsTab(dataVersion)
+                    5 -> AccountTab()
                 }
             }
         }
@@ -157,11 +159,11 @@ class MainActivity : ComponentActivity() {
                     startActivity(Intent(AndroidSettings.ACTION_INPUT_METHOD_SETTINGS))
                 }
                 Step("2. Allow the microphone", hasMic(), "Allow") { askMic() }
-                Step("3. Add your Groq API key", app.secure.has(SecureStore.GROQ_KEY), "Add") { goTo(3) }
+                Step("3. Add your Groq API key", app.secure.has(SecureStore.GROQ_KEY), "Add") { goTo(4) }
                 Step("4. Switch to WhisperAsh (🌐 key or here)", keyboardSelected(), "Switch") {
                     (getSystemService(Context.INPUT_METHOD_SERVICE) as InputMethodManager).showInputMethodPicker()
                 }
-                Step("5. Log in to sync with your PC (optional)", app.sync.signedIn, "Log in") { goTo(4) }
+                Step("5. Log in to sync with your PC (optional)", app.sync.signedIn, "Log in") { goTo(5) }
             }
 
             Section("Try it") {

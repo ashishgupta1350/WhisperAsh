@@ -181,23 +181,21 @@ class WhisperAshIme : InputMethodService() {
         if (::status.isInitialized && state == State.IDLE) refreshIdleStatus()
     }
 
-    private fun rowParams(w: Float) = LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.MATCH_PARENT, w).apply {
-        setMargins(dp(3), dp(6), dp(3), dp(5))
-    }
+    // Keys fill their whole cell with no margins, so the gaps between keys still count as the
+    // nearest key; the gap is only drawn (see keyBackground's inset).
+    private fun rowParams(w: Float) = LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.MATCH_PARENT, w)
 
     private fun buildBottomRow() {
         bottomRow.removeAllViews()
         fun add(v: View, w: Float) = bottomRow.addView(v, rowParams(w))
-        val globe = key("🌐", 17f, FN) { switchKeyboard() }.apply {
-            setOnLongClickListener { showPicker(); true }
+        val globe = key("🌐", 17f, FN, onLong = { showPicker() }) { switchKeyboard() }.apply {
             contentDescription = "Switch keyboard"
         }
         val comma = key(",", 20f, FN) { typeText(",") }
-        val space = key("", 14f, KEY) { typeText(" ") }.apply {
-            setOnLongClickListener { showPicker(); true }
+        val space = key("", 14f, KEY, onLong = { showPicker() }) { typeText(" ") }.apply {
             contentDescription = "Space"
         }
-        val period = key(".", 20f, FN) { typeText(".") }.apply { setOnLongClickListener { haptic(it); typeText("?"); true } }
+        val period = key(".", 20f, FN, onLong = { typeText("?") }) { typeText(".") }
         enterKey = key(enterLabel, 18f, ACCENT, pill = true) { pressEnter() }.apply { contentDescription = "Enter" }
         if (typingMode) {
             val sym = key(if (symbols) "ABC" else "?123", 14f, FN, pill = true) { symbols = !symbols; buildLetters(); buildBottomRow() }
@@ -223,16 +221,21 @@ class WhisperAshIme : InputMethodService() {
                 val s = if (symbols) key("=", 19f, FN) { typeText("=") }
                 else key("⇧", 20f, FN) { tapShift() }.also { shiftKey = it; it.contentDescription = "Shift" }
                 add(s, 1.5f)
-            } else if (i == 1 && !symbols) row.addView(View(this), LinearLayout.LayoutParams(0, 1, 0.5f))
-            chars.forEachIndexed { j, c ->
+            }
+            val rowKeys = chars.mapIndexed { j, c ->
                 // Top row letters carry their number in the corner; hold to type it.
                 val hint = if (i == 0 && !symbols) DIGITS[j].toString() else null
                 val (view, label) = letterKey(c, hint)
-                if (hint != null) view.setOnLongClickListener { haptic(it); typeText(hint); true }
                 letterKeys += label to c
-                add(view, 1f)
+                Triple(view, c, hint)
             }
-            if (i == 1 && !symbols) row.addView(View(this), LinearLayout.LayoutParams(0, 1, 0.5f))
+            // The a–l row is indented by half a key: those side strips type "a" and "l" (no dead zones).
+            fun sideStrip(target: Triple<View, String, String?>) = View(this).also { strip ->
+                attachTap(strip, visual = target.first) { typeLetter(target.second) }
+            }
+            if (i == 1 && !symbols) row.addView(sideStrip(rowKeys.first()), rowParams(0.5f))
+            rowKeys.forEach { add(it.first, 1f) }
+            if (i == 1 && !symbols) row.addView(sideStrip(rowKeys.last()), rowParams(0.5f))
             if (i == 2) {
                 val back = key("⌫", 19f, FN) {}.apply { contentDescription = "Delete" }
                 setupRepeat(back)
@@ -248,9 +251,9 @@ class WhisperAshIme : InputMethodService() {
         val frame = FrameLayout(this).apply {
             background = keyBackground(KEY, KEY_PRESSED, false)
             isHapticFeedbackEnabled = true
-            setOnClickListener { haptic(this); typeLetter(c) }
             contentDescription = c
         }
+        attachTap(frame, onLong = hint?.let { h -> { typeText(h) } }) { typeLetter(c) }
         val label = TextView(this).apply {
             text = c; textSize = 23f; gravity = Gravity.CENTER; setTextColor(KEY_TEXT)
         }
@@ -309,18 +312,81 @@ class WhisperAshIme : InputMethodService() {
         setColor(color); cornerRadius = dp(if (pill) 24 else 7).toFloat()
     }
 
+    // The key shape is drawn inset inside its cell: the visible gap between keys is part of the key's touch area.
     private fun keyBackground(color: Int, pressed: Int, pill: Boolean) = StateListDrawable().apply {
-        addState(intArrayOf(android.R.attr.state_pressed), shape(pressed, pill))
-        addState(intArrayOf(), shape(color, pill))
+        fun inset(d: android.graphics.drawable.Drawable) = android.graphics.drawable.InsetDrawable(d, dp(3), dp(6), dp(3), dp(5))
+        addState(intArrayOf(android.R.attr.state_pressed), inset(shape(pressed, pill)))
+        addState(intArrayOf(), inset(shape(color, pill)))
     }
 
-    private fun key(label: String, size: Float, color: Int = KEY, pill: Boolean = false, onClick: () -> Unit) = TextView(this).apply {
+    /**
+     * Gboard-style touch handling: vibrate on touch-down, act on lift wherever the finger ended up (a slight
+     * roll off the key used to cancel the press), hold for [onLong]. Each key handles its own finger, so fast
+     * overlapping taps on two keys both count.
+     */
+    @SuppressLint("ClickableViewAccessibility")
+    // Fast two-thumb typing: the next finger often lands before the last one lifts. Like the stock
+    // keyboards, a new press types the key that is still held first, so letters keep the order they
+    // were pressed in and none are lost (also when both fingers hit the same key).
+    private class Press(val onTap: () -> Unit, val longPress: Runnable) {
+        var done = false
+    }
+    private var heldPress: Press? = null
+
+    private fun finish(p: Press, type: Boolean) {
+        main.removeCallbacks(p.longPress)
+        if (!p.done) {
+            p.done = true
+            if (type) p.onTap()
+        }
+        if (heldPress === p) heldPress = null
+    }
+
+    private fun attachTap(view: View, visual: View = view, onLong: (() -> Unit)? = null, onTap: () -> Unit) {
+        val presses = HashMap<Int, Press>()
+        view.setOnTouchListener { _, ev ->
+            val id = ev.getPointerId(ev.actionIndex)
+            when (ev.actionMasked) {
+                MotionEvent.ACTION_DOWN, MotionEvent.ACTION_POINTER_DOWN -> {
+                    heldPress?.let { finish(it, true) }
+                    lateinit var p: Press
+                    p = Press(onTap, Runnable {
+                        if (!p.done) { p.done = true; haptic(visual); onLong?.invoke() }
+                        if (heldPress === p) heldPress = null
+                    })
+                    presses.remove(id)?.let { finish(it, true) }
+                    presses[id] = p
+                    heldPress = p
+                    visual.isPressed = true
+                    haptic(visual)
+                    if (onLong != null) main.postDelayed(p.longPress, 420)
+                }
+                MotionEvent.ACTION_UP, MotionEvent.ACTION_POINTER_UP -> {
+                    presses.remove(id)?.let { finish(it, true) }
+                    visual.isPressed = presses.isNotEmpty()
+                }
+                MotionEvent.ACTION_CANCEL -> {
+                    presses.values.forEach { finish(it, false) }
+                    presses.clear()
+                    visual.isPressed = false
+                }
+            }
+            true
+        }
+        // TalkBack and other accessibility services still activate keys with a click.
+        view.setOnClickListener { onTap() }
+    }
+
+    private fun key(
+        label: String, size: Float, color: Int = KEY, pill: Boolean = false,
+        onLong: (() -> Unit)? = null, onClick: () -> Unit,
+    ) = TextView(this).apply {
         text = label; textSize = size; gravity = Gravity.CENTER
         val pressed = when (color) { KEY -> KEY_PRESSED; FN -> FN_PRESSED; else -> 0xFFD3D7EA.toInt() }
         setTextColor(if (color == ACCENT) ACCENT_TEXT else KEY_TEXT)
         background = keyBackground(color, pressed, pill)
         isHapticFeedbackEnabled = true
-        setOnClickListener { haptic(this); onClick() }
+        attachTap(this, onLong = onLong, onTap = onClick)
     }
 
     /** A borderless toolbar button, like the icons above the stock keyboard. */
@@ -645,13 +711,63 @@ class WhisperAshIme : InputMethodService() {
                         refreshIdleStatus()
                         Log.i(TAG, "SET $key=${intent.getStringExtra("value")}")
                     }
+                    ACTION_TOUCH -> injectTouches(intent.getStringExtra("seq") ?: return)
+                    ACTION_NOTE_TEXT -> {
+                        // Same step the Notes tab runs after speech-to-text: words -> titled bullet note.
+                        val f = File(getExternalFilesDir("test"), intent.getStringExtra("file") ?: return)
+                        app.scope.launch(Dispatchers.IO) {
+                            try {
+                                val t0 = System.currentTimeMillis()
+                                val n = app.notes.create(f.readText())
+                                Log.i(TAG, "NOTE " + org.json.JSONObject().put("file", f.name).put("ms", System.currentTimeMillis() - t0)
+                                    .put("title", n.title).put("body", n.body).toString())
+                            } catch (e: Exception) {
+                                Log.i(TAG, "NOTE_ERROR ${f.name} ${e.message}")
+                            }
+                        }
+                    }
                 }
             }
         }
-        val filter = IntentFilter().apply { addAction(ACTION_DICTATE_FILE); addAction(ACTION_MIC); addAction(ACTION_SET); addAction(ACTION_TTS) }
+        val filter = IntentFilter().apply {
+            addAction(ACTION_DICTATE_FILE); addAction(ACTION_MIC); addAction(ACTION_SET); addAction(ACTION_TTS); addAction(ACTION_TOUCH); addAction(ACTION_NOTE_TEXT)
+        }
         // Only senders holding DUMP may trigger these: adb shell has it, ordinary apps cannot get it.
         ContextCompat.registerReceiver(this, r, filter, Manifest.permission.DUMP, null, ContextCompat.RECEIVER_EXPORTED)
         debugReceiver = r
+    }
+
+    // Debug only: multi-finger touches on the keyboard, e.g. "d0 486 1796;d1 646 1946;u1;u0"
+    // (d<pointer> x y = finger down at screen pixels, u<pointer> = lift). adb's `input tap` is single-finger.
+    private fun injectTouches(seq: String) {
+        val root = window?.window?.decorView ?: return
+        val loc = IntArray(2).also { root.getLocationOnScreen(it) }
+        val down = System.currentTimeMillis()
+        val active = LinkedHashMap<Int, Pair<Float, Float>>()
+        for ((i, step) in seq.split(';').map { it.trim() }.filter { it.isNotEmpty() }.withIndex()) {
+            val parts = step.substring(1).trim().split(Regex("\\s+"))
+            val pid = parts[0].toInt()
+            val action: Int
+            if (step[0] == 'd') {
+                active[pid] = (parts[1].toFloat() - loc[0]) to (parts[2].toFloat() - loc[1])
+                val idx = active.keys.indexOf(pid)
+                action = if (active.size == 1) MotionEvent.ACTION_DOWN
+                else MotionEvent.ACTION_POINTER_DOWN or (idx shl MotionEvent.ACTION_POINTER_INDEX_SHIFT)
+            } else {
+                val idx = active.keys.indexOf(pid)
+                action = if (active.size == 1) MotionEvent.ACTION_UP
+                else MotionEvent.ACTION_POINTER_UP or (idx shl MotionEvent.ACTION_POINTER_INDEX_SHIFT)
+            }
+            val ids = active.keys.toList()
+            val props = Array(ids.size) { MotionEvent.PointerProperties().apply { id = ids[it]; toolType = MotionEvent.TOOL_TYPE_FINGER } }
+            val coords = Array(ids.size) { MotionEvent.PointerCoords().apply { x = active[ids[it]]!!.first; y = active[ids[it]]!!.second; pressure = 1f; size = 1f } }
+            val ev = MotionEvent.obtain(down, down + i * 40L, action, ids.size, props, coords, 0, 0, 1f, 1f, 0, 0,
+                android.view.InputDevice.SOURCE_TOUCHSCREEN, 0)
+            root.dispatchTouchEvent(ev)
+            ev.recycle()
+            if (step[0] == 'u') active.remove(pid)
+        }
+        Log.i(TAG, "TOUCH done: $seq")
     }
 
     // Debug only: speaks a sentence with the phone's own TTS into a WAV, for Hindi test clips.
@@ -690,6 +806,8 @@ class WhisperAshIme : InputMethodService() {
         const val ACTION_MIC = "com.whisperash.android.DEBUG_MIC"
         const val ACTION_SET = "com.whisperash.android.DEBUG_SET"
         const val ACTION_TTS = "com.whisperash.android.DEBUG_TTS"
+        const val ACTION_TOUCH = "com.whisperash.android.DEBUG_TOUCH"
+        const val ACTION_NOTE_TEXT = "com.whisperash.android.DEBUG_NOTE_TEXT"
         val LETTER_ROWS = listOf("qwertyuiop", "asdfghjkl", "zxcvbnm").map { r -> r.map { it.toString() } }
         val SYMBOL_ROWS = listOf(
             listOf("1", "2", "3", "4", "5", "6", "7", "8", "9", "0"),

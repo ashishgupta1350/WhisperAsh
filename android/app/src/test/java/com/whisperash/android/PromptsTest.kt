@@ -6,6 +6,42 @@ import org.junit.Assert.assertTrue
 import org.junit.Test
 
 class PromptsTest {
+    // Real APK run, PC recording 17 (17 Nov 2026): Qwen deleted "English" six times.
+    private val raw17 = "Dekho, ek issue yeh a rahe hai ki, let's say ki, like I start with Hindi, like speaking with Hindi, the Hindi word. Toh it picks up the Hindi word and then, you know, it kind of, like even the English words is transcribing in Hindi, right? And just for example, you can check the past messages that I've sent to this app. Right, and let's say if I start with English and say Hinglish, ya Hindi words, toh it comes in Hinglish. Okay, so, I mean, like, but in typeless or like other whisper flow, what happens is ki let's say I'm talking in Hindi, main ek sentence Hindi mein bol raha hoon, and then like English comes up, so English words come up, toh English mein nazar aata hai. And then also, English shows up in that sentence."
+    private val bad17 = "Dekho, ek issue yeh aa raha hai ki, let's say ki I start with Hindi, like speaking with Hindi words. Toh it picks up the Hindi word and then, even the words are transcribing in Hindi, right? And just for example, you can check the past that I've sent to this app. Right? And let's say if I start with Hinglish, or Hindi words, toh it comes in Hinglish. Okay. So, I mean, but in Typeless or like other Whisper flows, what happens is ki let's say I'm in Hindi, main ek Hindi mein bol raha hoon, and then like comes up, so words come up, toh mein nazar aata hai. And then also, shows up in that sentence."
+
+    @Test fun retentionFlagsDeletedWords() {
+        val r = Prompts.checkRetention(raw17, bad17)
+        assertTrue(r.flagged)
+        assertEquals("english", r.gone.first())
+        assertTrue(Prompts.retentionRetry(raw17, r.gone).contains("(english, "))
+    }
+
+    @Test fun retentionAllowsNormalCleanup() {
+        // fillers, a dropped repeat and Hinglish spelling fixes are fine
+        assertFalse(Prompts.checkRetention(
+            "So, like if I close the app and open it, are the settings forgotten by the app?",
+            "So, if I close the app and open it, are the settings forgotten by the app?").flagged)
+        assertFalse(Prompts.checkRetention(
+            "I mean the Windows app. I'm talking about the Windows app.", "I mean the Windows app.").flagged)
+        assertFalse(Prompts.checkRetention(
+            "Okay, to yeh batao ki main kaise karke gurgaon jaa sakta hu, aur kitna time lagega mirko gurgaon jaane me, aur gurgaon se wapis ane me kitna time lagega? Main Rohingya sector 8 mein rehta hu, to mirko yeh pata lagana hai ki gurgaon jaa ke wapis ane me kitna time lagega?",
+            "Okay, toh yeh batao ki main kaise karke Gurgaon jaa sakta hoon, aur kitna time lagega merko Gurgaon jaane mein, aur Gurgaon se wapas aane mein kitna time lagega? Main Rohini Sector 8 mein rehta hoon, toh merko yeh pata lagana hai ki Gurgaon jaake wapas aane mein kitna time lagega.").flagged)
+    }
+
+    @Test fun retentionFlagsBigCut() {
+        val said = "We should first organize the customer data, then segment buyers by budget, location, profession and family size, and only after that design personas for each project."
+        assertTrue(Prompts.checkRetention(said, "Organize the data, then design personas.").flagged)
+    }
+
+    @Test fun quietSpeechPassesTheGate() {
+        assertTrue(LevelMeter.isSpeechWindow(0.0068, 0.025)) // PC recording 66, peak window
+        assertFalse(LevelMeter.isSpeechWindow(0.0015, 0.01)) // room noise
+        assertTrue(LevelMeter.hasSpeech(0.025, 100))
+        assertFalse(LevelMeter.hasSpeech(0.015, 0))
+        assertFalse(LevelMeter.hasSpeech(0.3, 0))
+    }
+
     @Test fun shortCleanUtteranceSkipsCleanup() {
         assertTrue(Prompts.isShortCleanUtterance("Thanks, see you tomorrow.", "roman"))
         assertFalse(Prompts.isShortCleanUtterance("um thanks", "roman"))

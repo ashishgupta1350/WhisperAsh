@@ -51,7 +51,7 @@ class SyncClient(
 
     private fun snapshot(busy: Boolean) = SyncState(
         signedIn, settings.email, busy, settings.lastSyncAt, settings.lastSyncError,
-        try { db.dirtyCount() + if (settings.settingsDirty) 1 else 0 } catch (_: Exception) { 0 },
+        try { db.dirtyCount() + db.dirtyNoteCount() + if (settings.settingsDirty) 1 else 0 } catch (_: Exception) { 0 },
     )
 
     fun refreshState() { _state.value = snapshot(_state.value.busy) }
@@ -135,6 +135,7 @@ class SyncClient(
         _state.value = snapshot(true)
         try {
             push()
+            pushNotes(force = reason == Reason.MANUAL || reason == Reason.LOGIN)
             pull()
             settings.lastSyncAt = System.currentTimeMillis()
             settings.lastSyncError = ""
@@ -175,6 +176,36 @@ class SyncClient(
         }
     }
 
+    /**
+     * Notes go in their own upload: a sync server that does not know the "notes" kind yet answers 400,
+     * which must never block history / dictionary sync. The notes then wait on the phone and are retried
+     * every 6 hours (or right away from Sync now).
+     */
+    private fun pushNotes(force: Boolean = false) {
+        if (!force && System.currentTimeMillis() - settings.notesUnsupportedAt < 6 * 3_600_000L) return
+        while (true) {
+            val rows = db.dirtyNotes(PUSH_BATCH)
+            if (rows.isEmpty()) return
+            val items = JSONArray()
+            for (r in rows) items.put(
+                JSONObject().put("kind", r.kind).put("id", r.id).put("updated_at", r.updatedAt)
+                    .put("deleted", r.deleted).put("data", r.data)
+            )
+            try {
+                request("/sync/push", JSONObject().put("items", items))
+            } catch (e: HttpError) {
+                if (e.status == 400) {
+                    settings.notesUnsupportedAt = System.currentTimeMillis()
+                    Log.w(TAG, "sync server does not take notes yet; kept on this phone")
+                    return
+                }
+                throw e
+            }
+            settings.notesUnsupportedAt = 0
+            db.markNotesClean(rows)
+        }
+    }
+
     private fun pull() {
         var cursor: JSONObject? = settings.cursorJson?.let { try { JSONObject(it) } catch (_: Exception) { null } }
         var changed = false
@@ -192,6 +223,8 @@ class SyncClient(
                 if (kind == "settings") {
                     gotSettings = true
                     if (applySettings(ts, deleted, data)) changed = true
+                } else if (kind == "notes") {
+                    if (db.applyRemoteNote(id, ts, deleted, data)) changed = true
                 } else if (db.applyRemote(kind, id, ts, deleted, data)) changed = true
             }
             cursor = page.optJSONObject("cursor")

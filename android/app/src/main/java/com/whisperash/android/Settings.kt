@@ -123,6 +123,10 @@ class Settings(context: Context) {
     var lastSyncAt: Long
         get() = prefs.getLong("last_sync_at", 0)
         set(v) = prefs.edit().putLong("last_sync_at", v).apply()
+    /** When the sync server last refused notes (it predates them); 0 = notes sync fine. */
+    var notesUnsupportedAt: Long
+        get() = prefs.getLong("notes_unsupported_at", 0)
+        set(v) = prefs.edit().putLong("notes_unsupported_at", v).apply()
     var lastSyncError: String
         get() = prefs.getString("last_sync_error", "") ?: ""
         set(v) = prefs.edit().putString("last_sync_error", v).apply()

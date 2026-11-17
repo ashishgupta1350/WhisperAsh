@@ -23,7 +23,7 @@ class NoSpeechException : Exception("No speech heard")
  */
 class DictationEngine(private val app: WhisperAshApp) {
 
-    fun process(rec: Recording, targetPkg: String?, stopAt: Long, cleanupModelOverride: String? = null, sttOverride: String? = null, onStage: (String) -> Unit = {}): DictationResult {
+    fun process(rec: Recording, targetPkg: String?, stopAt: Long, cleanupModelOverride: String? = null, sttOverride: String? = null, skipCleanup: Boolean = false, onStage: (String) -> Unit = {}): DictationResult {
         val s = app.settings
         val t = JSONObject()
         val audioSec = rec.durationMs / 1000.0
@@ -32,7 +32,7 @@ class DictationEngine(private val app: WhisperAshApp) {
         t.put("encode_flush_ms", System.currentTimeMillis() - stopAt)
         try {
             // A clip with no voice at all would only make Whisper invent "Thank you."
-            if (rec.peak < 0.02 || rec.speechMs < 150) throw NoSpeechException()
+            if (!LevelMeter.hasSpeech(rec.peak, rec.speechMs)) throw NoSpeechException()
             val quiet = rec.peak < 0.08
             val language = s.language
             val pref = s.hindiScript
@@ -75,7 +75,7 @@ class DictationEngine(private val app: WhisperAshApp) {
             val heard = Prompts.fixSpokenEmails(raw)
             var text = heard
             var cleanupModel: String? = null
-            if (s.useCleanup && !Prompts.isShortCleanUtterance(raw, pref)) {
+            if (!skipCleanup && s.useCleanup && !Prompts.isShortCleanUtterance(raw, pref)) {
                 onStage("Polishing…")
                 val cleanStart = System.currentTimeMillis()
                 val category = Prompts.appCategory(targetPkg)
@@ -93,6 +93,24 @@ class DictationEngine(private val app: WhisperAshApp) {
                         // An empty answer for a real sentence is a model failure, not "filler only".
                         text = Prompts.fixSpokenEmails(if (cleaned.isEmpty() && rawWords > 3) heard else cleaned)
                         cleanupModel = m
+                        // Cleanup must never delete what was said: one retry naming the lost words, else the raw text.
+                        val kept = Prompts.checkRetention(heard, text)
+                        if (kept.flagged) {
+                            Log.i(TAG, "Cleanup dropped words ${kept.gone.take(8)}; retrying")
+                            t.put("retention_retry", kept.gone.take(8).joinToString(","))
+                            text = try {
+                                val r2 = app.groq.chat(m, system, Prompts.retentionRetry(heard, kept.gone), maxTokens)
+                                app.db.recordUsage("llm", 0.0, r2.tokens, m)
+                                t.put("cleanup_tokens", r.tokens + r2.tokens)
+                                val second = Prompts.fixSpokenEmails(Prompts.tidyModelOutput(r2.text))
+                                if (second.isNotBlank() && !Prompts.checkRetention(heard, second).flagged) second
+                                else heard.also { t.put("retention_fallback", "raw") }
+                            } catch (e: Exception) {
+                                Log.w(TAG, "Retention retry failed: ${e.message}")
+                                t.put("retention_fallback", "raw")
+                                heard
+                            }
+                        }
                         break
                     } catch (e: Exception) {
                         Log.w(TAG, "Cleanup with $m failed: ${e.message}")

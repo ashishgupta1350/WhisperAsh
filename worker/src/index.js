@@ -9,7 +9,7 @@ const LOCK_MS = 15 * 60 * 1000;
 const PULL_LIMIT = 500;
 const PUSH_LIMIT = 200;
 const MAX_ITEM_BYTES = 64 * 1024;
-const KINDS = new Set(['history', 'dictionary', 'settings']);
+const KINDS = new Set(['history', 'dictionary', 'settings', 'notes']);
 
 const enc = new TextEncoder();
 
