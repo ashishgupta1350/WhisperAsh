@@ -232,12 +232,10 @@ class WindowManager {
       return;
     }
 
-    if (process.platform === "win32") {
-      // Windows click-through forwarding is unreliable for this floating panel.
-      this.mainWindow.setIgnoreMouseEvents(false);
-      return;
-    }
-
+    // WhisperAsh: Windows used to stay interactive all the time, so the whole transparent window
+    // around the pill (208x120 at rest) swallowed clicks meant for the apps underneath. It now
+    // works like macOS: click-through with forwarded mouse moves, and the renderer turns capture
+    // on while the pointer is over the pill, a menu or a toast.
     if (process.platform === "linux") {
       // Native capture is the fallback when the input-region helper is unavailable.
       this.mainWindow.setIgnoreMouseEvents(!shouldCapture);

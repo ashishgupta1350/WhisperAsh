@@ -33,7 +33,7 @@ function extractText(data) {
 }
 
 async function transcribeWithGemini(
-  { audioBuffer, model, contentType, language, keyterms, apiKey, signal },
+  { audioBuffer, model, contentType, language, keyterms, apiKey, signal, gateway },
   fetchImpl
 ) {
   if (!apiKey?.trim()) {
@@ -74,9 +74,12 @@ async function transcribeWithGemini(
   );
 
   const doFetch = fetchImpl || ((url, init) => net.fetch(url, init));
-  const response = await doFetch(GEMINI_INTERACTIONS_URL, {
+  // WhisperAsh account mode: the WhisperAsh server forwards to Gemini with the owner's key.
+  const url = gateway ? `${gateway.base}/gemini/v1beta/interactions` : GEMINI_INTERACTIONS_URL;
+  const auth = gateway ? { authorization: `Bearer ${apiKey}` } : { "x-goog-api-key": apiKey };
+  const response = await doFetch(url, {
     method: "POST",
-    headers: { "Content-Type": "application/json", "x-goog-api-key": apiKey },
+    headers: { "Content-Type": "application/json", ...auth },
     body: JSON.stringify(requestBody),
     ...(signal ? { signal } : {}),
   });

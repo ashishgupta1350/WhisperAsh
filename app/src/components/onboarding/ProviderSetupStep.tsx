@@ -41,6 +41,7 @@ import {
 } from "./flow";
 import { useDebouncedCallback } from "../../hooks/useDebouncedCallback";
 import { isBlankByokDraft, resolveSavedByokConfig } from "./savedByokConfig";
+import WhisperAshSignInCard from "./WhisperAshSignInCard";
 
 export function SetupStageStepper({ stepId }: { stepId: OnboardingStepId }) {
   const { t } = useTranslation();
@@ -485,11 +486,27 @@ export function ByokProviderStep({
     onProceed();
   };
 
+  // WhisperAsh: signed in to a WhisperAsh account, the step needs no key; requests go through the
+  // WhisperAsh server, which only serves Groq (Whisper for dictation, GPT-OSS / Qwen for the rest).
+  const proceedWithWhisperAshAccount = () => {
+    if (assistant) {
+      store.setChatAgentMode("providers");
+      store.switchReasoningProvider("chatIntelligence", "groq", "openai/gpt-oss-120b");
+      store.setChatAgentModel("openai/gpt-oss-120b");
+    } else {
+      store.setCloudTranscriptionMode("byok");
+      store.switchCloudTranscriptionProvider("dictation", "groq");
+      store.setCloudTranscriptionModel("whisper-large-v3");
+    }
+    onProceed();
+  };
+
   return (
     <section className={`mt-5 ${SETUP_CARD_CLASS}`}>
       <SetupStageStepper stepId={stepId} />
 
       <div className="mt-3 space-y-3">
+        <WhisperAshSignInCard onContinue={proceedWithWhisperAshAccount} />
         {selfHostedAllowed && (
           <button
             type="button"

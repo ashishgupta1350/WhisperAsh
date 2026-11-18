@@ -194,6 +194,7 @@ import {
 import { normalizeAgentSelectionContext } from "../utils/agentSelectionContext";
 import { getAgentName } from "../utils/agentName";
 import { shouldDisplayDictationPreview } from "../utils/transcriptionPreview";
+import { getAccountToken, whisperAshAccountActive } from "../utils/whisperashEngine";
 import {
   buildSelectionEditSystemPrompt,
   buildSelectionEditUserPrompt,
@@ -2079,11 +2080,18 @@ registerProcessor("pcm-streaming-processor", PCMStreamingProcessor);
     const cleanupMs = result?.timings?.reasoningProcessingDurationMs ?? null;
     const cloudGroq = !useLocalWhisper && settings.cloudTranscriptionProvider === "groq";
     try {
-      if (cloudGroq) bridge.recordUsage({ kind: "stt", audioSeconds: audioSeconds || 0, model: activeModel });
-      if (cleanupMs != null && settings.cleanupProvider === "groq") {
-        const chars = (result.rawText || result.text || "").length;
-        // ~1 token per 4 characters, plus the cleanup prompt (~700 tokens).
-        bridge.recordUsage({ kind: "llm", tokens: 700 + Math.ceil((chars * 2) / 4), model: settings.cleanupModel });
+      // Cleanup usage is recorded where the Groq call returns (ReasoningService),
+      // with Groq's real token count, so skipped cleanups are never counted.
+      if (cloudGroq) {
+        const limits = this._waGroqSttLimits || {};
+        this._waGroqSttLimits = null;
+        bridge.recordUsage({
+          kind: "stt",
+          audioSeconds: audioSeconds || 0,
+          model: activeModel,
+          remainingRequests: limits.remainingRequests ?? null,
+          limitRequests: limits.limitRequests ?? null,
+        });
       }
     } catch {
       /* usage counter is best effort */
@@ -3002,8 +3010,9 @@ registerProcessor("pcm-streaming-processor", PCMStreamingProcessor);
         throw err;
       }
     } else if (provider === "groq") {
-      // Prefer store value (user-entered via UI) over main process (.env)
-      apiKey = s.groqApiKey;
+      // WhisperAsh account mode: the session token, sent to the WhisperAsh server (see whisperashEngine).
+      // Otherwise prefer store value (user-entered via UI) over main process (.env)
+      apiKey = getAccountToken() || s.groqApiKey;
       if (!isValidApiKey(apiKey, "groq")) {
         apiKey = await window.electronAPI.getGroqKey?.();
       }
@@ -4528,6 +4537,17 @@ registerProcessor("pcm-streaming-processor", PCMStreamingProcessor);
       }
 
       const responseContentType = response.headers.get("content-type") || "";
+      // WhisperAsh: Groq's own "requests left today" for the usage panel.
+      if (provider === "groq") {
+        const num = (name) => {
+          const v = response.headers.get(name);
+          return v != null && v !== "" && Number.isFinite(Number(v)) ? Number(v) : null;
+        };
+        this._waGroqSttLimits = {
+          remainingRequests: num("x-ratelimit-remaining-requests"),
+          limitRequests: num("x-ratelimit-limit-requests"),
+        };
+      }
 
       logger.debug(
         "Transcription API response received",
@@ -4779,7 +4799,8 @@ registerProcessor("pcm-streaming-processor", PCMStreamingProcessor);
   async _geminiRawText(audioBlob, language, wasCancelled) {
     const s = getSettings();
     if (s.useLocalWhisper || s.cloudTranscriptionProvider !== "groq" || wasCancelled()) return null;
-    const hasKey = await window.electronAPI?.getGeminiKey?.();
+    // In account mode the WhisperAsh server holds the Gemini key (main routes the request there).
+    const hasKey = whisperAshAccountActive() || (await window.electronAPI?.getGeminiKey?.());
     if (!hasKey || !window.electronAPI?.proxyGeminiTranscription) return null;
     const result = await window.electronAPI.proxyGeminiTranscription({
       audioBuffer: await audioBlob.arrayBuffer(),

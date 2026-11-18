@@ -23,9 +23,9 @@ export function hindiRulesApply(language) {
 }
 
 const COMMON =
-  "Hindi filler words (matlab, na, haan toh, wo, yaar) are fillers only when they carry no meaning. " +
-  "Self-corrections in Hindi (\"nahi nahi\", \"matlab\", \"sorry\", \"I mean\") keep only the corrected version." +
-  " Replies, greetings and forms of address (haan, haan bhai, arre, ji, bhai, yaar when said to someone) carry meaning: keep them.";
+  "Hindi fillers (matlab, na, haan toh, wo, yaar) go only when they carry no meaning; for Hindi self-corrections " +
+  "(\"nahi nahi\", \"matlab\", \"I mean\") keep only the corrected version. Keep replies, greetings and forms of " +
+  "address (haan, haan bhai, arre, ji, bhai, yaar said to someone).";
 
 export function getHindiCleanupInstruction(preference = getHindiScriptPreference()) {
   if (preference === "english") {
@@ -47,11 +47,9 @@ export function getHindiCleanupInstruction(preference = getHindiScriptPreference
   }
   return (
     "LANGUAGE AND SCRIPT (most important rule; it overrides everything below): The speaker mixes Hindi and " +
-    "English (Hinglish). NEVER TRANSLATE. Every Hindi word stays Hindi, written in Roman (Latin) letters the way " +
-    "people type Hinglish in chats; every English word stays English. Hindi output must still be Hindi you can " +
-    "read aloud word for word, not an English paraphrase. If the transcript contains Devanagari, transliterate it " +
-    "to Roman letters; English words written phonetically in Devanagari (e.g. इंग्लिश, यू कैन यूज़) go back to normal English " +
-    "spelling (English, you can use). " +
+    "English (Hinglish). NEVER TRANSLATE. Hindi words stay Hindi, in Roman letters as people type Hinglish in chats; " +
+    "English words stay English. Turn any Devanagari into Roman letters, and English words written in Devanagari " +
+    "(इंग्लिश, यू कैन यूज़) back into English spelling. " +
     COMMON +
     "\nHINGLISH EXAMPLES:\n" +
     "Input: अपना फोन कनेक्ट कर दिया है, तो यू कैन यूज़ द फोन\n" +
@@ -59,8 +57,7 @@ export function getHindiCleanupInstruction(preference = getHindiScriptPreference
     "Input: मैं हिंदी में बोल रहा हूँ, बट ये इंग्लिश में क्यों translate कर रहा है?\n" +
     "Output: Main Hindi mein bol raha hoon, but ye English mein kyon translate kar raha hai?\n" +
     "Input: um bhai kal ki meeting cancel ho gayi hai so let's meet on friday theek hai\n" +
-    "Output: Bhai, kal ki meeting cancel ho gayi hai, so let's meet on Friday, theek hai?\n" +
-    "WRONG (translated, never do this): \"I am speaking in Hindi, but why is it translating to English?\""
+    "Output: Bhai, kal ki meeting cancel ho gayi hai, so let's meet on Friday, theek hai?"
   );
 }
 

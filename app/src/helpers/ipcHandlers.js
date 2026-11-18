@@ -5848,13 +5848,17 @@ class IPCHandlers {
     ipcMain.handle(
       "proxy-gemini-transcription",
       serializeIpcError(async (event, { audioBuffer, model, language, keyterms }) => {
+        // WhisperAsh account mode: through the WhisperAsh server with the session token.
+        const engine = global.whisperashEngineInfo?.();
+        const viaAccount = !!(engine?.account && engine.token && engine.base);
         return await transcribeWithGemini({
           audioBuffer: Buffer.from(audioBuffer),
           model,
           contentType: "audio/webm",
           language,
           keyterms,
-          apiKey: this.environmentManager.getGeminiKey(),
+          apiKey: viaAccount ? engine.token : this.environmentManager.getGeminiKey(),
+          gateway: viaAccount ? { base: engine.base } : undefined,
         });
       })
     );

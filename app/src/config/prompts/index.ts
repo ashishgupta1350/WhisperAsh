@@ -3,13 +3,10 @@ import { useSettingsStore } from "../../stores/settingsStore";
 import { en as enPrompts } from "../../locales/prompts";
 import { getLanguageInstruction } from "../../utils/languageSupport";
 import {
-  ADDRESS_RULE,
-  accountEmailInstruction,
   getHindiCleanupInstruction,
   hindiRuleGoesFirst,
   hindiRulesApply,
 } from "../../utils/hindiScript";
-import { getAccountEmail } from "../../utils/whisperashAccount";
 import { splitSharedDictionaryWords } from "../../utils/snippets";
 import { PROMPT_KINDS, PLAIN_TEXT_RESPONSE_SUFFIX, type PromptKind } from "./registry";
 
@@ -108,10 +105,8 @@ function applySubstitutions(template: string, opts: ResolvePromptOptions): strin
     prompt += "\n\n" + langInstruction;
   }
 
-  // WhisperAsh: spoken email / web addresses, and the signed-in account email's exact spelling.
-  prompt += "\n\n" + ADDRESS_RULE;
-  const emailLine = accountEmailInstruction(getAccountEmail());
-  if (emailLine) prompt += " " + emailLine;
+  // WhisperAsh: spoken email addresses are fixed in code (fixSpokenEmails) before and after
+  // cleanup, so no address rule here; it cost ~150 tokens on every dictation.
 
   return appendDictionarySuffix(prompt, opts.customDictionary, opts.uiLanguage);
 }

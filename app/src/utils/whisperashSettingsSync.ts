@@ -8,6 +8,13 @@ export interface WhisperAshUsageWindow {
   tokens: number;
 }
 
+// Groq's own x-ratelimit-*-requests headers from the latest call (per model).
+export interface WhisperAshGroqLimit {
+  remaining: number;
+  lim: number | null;
+  ts: number;
+}
+
 export interface WhisperAshState {
   serverUrl: string;
   email: string;
@@ -17,8 +24,20 @@ export interface WhisperAshState {
   lastSyncAt: number | null;
   lastError: string | null;
   usage: {
-    stt: { minute: WhisperAshUsageWindow; hour: WhisperAshUsageWindow; day: WhisperAshUsageWindow };
-    llm: { minute: WhisperAshUsageWindow; day: WhisperAshUsageWindow };
+    stt: {
+      minute: WhisperAshUsageWindow;
+      hour: WhisperAshUsageWindow;
+      day: WhisperAshUsageWindow;
+      model?: string | null;
+      groq?: WhisperAshGroqLimit | null;
+      groqAudioHour?: { remaining: number; lim: number | null } | null;
+    };
+    llm: {
+      minute: WhisperAshUsageWindow;
+      day: WhisperAshUsageWindow;
+      models?: Array<{ model: string; requests: number; tokens: number; groq: WhisperAshGroqLimit | null }>;
+      since?: number;
+    };
     limits: {
       stt: { rpm: number; rpd: number; audioPerHour: number; audioPerDay: number };
       llm: { rpm: number; rpd: number; tpd: number };
@@ -34,6 +53,20 @@ export interface WhisperAshState {
     };
   };
   lastTiming: Record<string, number | string> | null;
+  /** Account mode: dictation through the WhisperAsh server (owner's keys) or this PC's own keys. */
+  engine?: { account: boolean; source: "account" | "own" | null };
+  /** The account's word allowance from the server's /me (account mode, signed in). */
+  plan?: WhisperAshPlan | null;
+}
+
+export interface WhisperAshPlan {
+  limit: number;
+  period: "day" | "week";
+  used: number;
+  left: number;
+  resetsAt: number;
+  status: "active" | "blocked";
+  ownKeys: { groq: boolean; gemini: boolean };
 }
 
 export interface WhisperAshResult {
@@ -49,8 +82,20 @@ export interface WhisperAshBridge {
   logout: () => Promise<WhisperAshResult>;
   syncNow: () => Promise<WhisperAshResult>;
   setServerUrl: (serverUrl: string) => Promise<WhisperAshResult>;
+  getEngine: () => Promise<{ account: boolean; base: string | null; token: string | null }>;
+  setEngine: (source: "account" | "own") => Promise<WhisperAshResult>;
+  refreshPlan: () => Promise<WhisperAshResult>;
+  forgotPassword: (p: { serverUrl?: string; email: string }) => Promise<WhisperAshResult>;
+  changePassword: (p: { current: string; password: string }) => Promise<WhisperAshResult>;
   recordSettings: (values: Record<string, string | null>) => void;
-  recordUsage: (usage: { kind: "stt" | "llm"; audioSeconds?: number; tokens?: number; model?: string }) => void;
+  recordUsage: (usage: {
+    kind: "stt" | "llm";
+    audioSeconds?: number;
+    tokens?: number;
+    model?: string;
+    remainingRequests?: number | null;
+    limitRequests?: number | null;
+  }) => void;
   recordTiming: (timing: Record<string, number | string>) => void;
   onState: (cb: (state: WhisperAshState) => void) => () => void;
   onApplySettings: (cb: (values: Record<string, string | null>) => void) => () => void;

@@ -8,6 +8,7 @@
 // Routes never carry secrets — `auth.keyRef` names the key slot the executor
 // resolves itself.
 import { API_ENDPOINTS, buildApiUrl, normalizeBaseUrl } from "../config/constants.ts";
+import { getGroqBase } from "../utils/whisperashEngine.ts";
 import {
   isSecureHttpEndpoint,
   isAzureOpenAIEndpoint,
@@ -47,7 +48,10 @@ export function byokFileSizeLimit(provider: string): number {
 // differ only in base URL and key slot; OpenAI itself falls through as the
 // default. OpenRouter is a broker, so its ids stay vendor-prefixed.
 const OPENAI_COMPATIBLE_TRANSCRIPTION_BASES: Record<string, string> = {
-  groq: API_ENDPOINTS.GROQ_BASE,
+  // WhisperAsh: the account gateway in account mode, api.groq.com otherwise.
+  get groq() {
+    return getGroqBase();
+  },
   openrouter: API_ENDPOINTS.OPENROUTER_BASE,
 };
 

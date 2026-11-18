@@ -90,8 +90,13 @@ const hoverCycle = (platform, win = fakeWindow()) => {
 
 const INTERACTIVE = { ignore: false, options: undefined };
 
-test("Windows keeps the existing always-interactive behavior", () => {
-  assert.deepEqual(hoverCycle("win32"), [INTERACTIVE, INTERACTIVE, INTERACTIVE]);
+// WhisperAsh: Windows clicks pass through the transparent window outside the pill, like macOS.
+test("Windows is click-through with forwarded moves outside the pill", () => {
+  assert.deepEqual(hoverCycle("win32"), [
+    INTERACTIVE,
+    { ignore: true, options: { forward: true } },
+    INTERACTIVE,
+  ]);
 });
 
 test("Linux native capture fallback does not request unsupported forwarding", () => {

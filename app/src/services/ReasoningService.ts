@@ -66,6 +66,7 @@ import type { InferenceMode } from "../types/electron";
 import { usePolicyStore } from "../stores/policyStore";
 import i18n from "../i18n";
 import type { ChatImageAttachment } from "../components/chat/types";
+import { getAccountToken, getGroqBase } from "../utils/whisperashEngine";
 
 export type ToolMetadata = Record<string, unknown> | Array<Record<string, unknown>>;
 
@@ -311,6 +312,12 @@ class ReasoningService extends BaseReasoningService {
     provider:
       "openai" | "anthropic" | "gemini" | "groq" | "tinfoil" | "custom" | "openrouter" | "corti"
   ): Promise<string> {
+    // WhisperAsh account mode: Groq calls go through the WhisperAsh server with the session token
+    // (never cached, so signing out or switching to "My own keys" takes effect at once).
+    if (provider === "groq") {
+      const accountToken = getAccountToken();
+      if (accountToken) return accountToken;
+    }
     if (provider === "custom") {
       let customKey = "";
       try {
@@ -525,6 +532,26 @@ class ReasoningService extends BaseReasoningService {
         }
 
         const jsonResponse = await res.json();
+
+        // WhisperAsh: record Groq's real token count and its own "requests left
+        // today" header for the usage panel (only calls that actually ran count).
+        if (providerName === "Groq") {
+          try {
+            const header = (name: string) => {
+              const v = res.headers.get(name);
+              return v != null && v !== "" && Number.isFinite(Number(v)) ? Number(v) : null;
+            };
+            (window as unknown as { whisperash?: { recordUsage?: (u: unknown) => void } }).whisperash?.recordUsage?.({
+              kind: "llm",
+              model,
+              tokens: Number(jsonResponse?.usage?.total_tokens) || 0,
+              remainingRequests: header("x-ratelimit-remaining-requests"),
+              limitRequests: header("x-ratelimit-limit-requests"),
+            });
+          } catch {
+            /* usage counter is best effort */
+          }
+        }
 
         logger.logReasoning(`${providerName.toUpperCase()}_RAW_RESPONSE`, {
           hasResponse: !!jsonResponse,
@@ -783,7 +810,7 @@ class ReasoningService extends BaseReasoningService {
         (
           {
             openai: API_ENDPOINTS.OPENAI_BASE,
-            groq: API_ENDPOINTS.GROQ_BASE,
+            groq: getGroqBase(),
             corti: API_ENDPOINTS.CORTI_MODELS_BASE,
             gemini: API_ENDPOINTS.GEMINI,
           } as Partial<Record<string, string>>
@@ -1793,7 +1820,7 @@ class ReasoningService extends BaseReasoningService {
       const openaiKey = await window.electronAPI?.getOpenAIKey?.();
       const anthropicKey = await window.electronAPI?.getAnthropicKey?.();
       const geminiKey = await window.electronAPI?.getGeminiKey?.();
-      const groqKey = await window.electronAPI?.getGroqKey?.();
+      const groqKey = getAccountToken() || (await window.electronAPI?.getGroqKey?.());
       const openrouterKey = await window.electronAPI?.getOpenrouterKey?.();
       const tinfoilKey = await window.electronAPI?.getTinfoilKey?.();
       const cortiKey = await window.electronAPI?.getCortiKey?.();

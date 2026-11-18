@@ -6,6 +6,7 @@ import type { LanguageModel } from "ai";
 import { getTinfoilLanguageModel } from "./tinfoilClient";
 import { API_ENDPOINTS } from "../../config/constants";
 import { openCodeSessionHeaders } from "./openCodeSession";
+import { getGroqBase } from "../../utils/whisperashEngine";
 
 // Renderer-side AI SDK factory. Cloud + local only — enterprise providers
 // (bedrock/azure/vertex) run in the main process via the
@@ -39,7 +40,8 @@ export async function getAIModel(
     case "openai":
       return createOpenAI({ apiKey })(model);
     case "groq":
-      return createGroq({ apiKey })(model);
+      // WhisperAsh: the account gateway speaks Groq's API, so only the base URL changes.
+      return createGroq({ apiKey, baseURL: getGroqBase() })(model);
     case "anthropic":
       // The agent window keeps Chromium's default webSecurity. Anthropic
       // only answers browser-origin requests that opt in with this header;
