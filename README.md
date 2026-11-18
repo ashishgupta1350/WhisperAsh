@@ -3,22 +3,23 @@
 ## Install (Windows 10/11, 64-bit)
 
 **Download:** [WhisperAsh-Setup.exe](https://github.com/ashishgupta1350/WhisperAsh/releases/latest/download/WhisperAsh-Setup.exe)
-(about 161 MB; all versions on the [Releases page](https://github.com/ashishgupta1350/WhisperAsh/releases)).
+(about 169 MB; all versions on the [Releases page](https://github.com/ashishgupta1350/WhisperAsh/releases)).
 
 1. **Turn off Smart App Control** (WhisperAsh is not code-signed, so Windows blocks it otherwise):
    Windows Security → App & browser control → Smart App Control → **Off**.
 2. Run `WhisperAsh-Setup.exe`. If Windows shows "Windows protected your PC", click **More info → Run anyway**.
    Click through the installer. WhisperAsh appears in the Start menu and on the Desktop and starts in the tray.
-3. **Groq key (free, required):** sign in at <https://console.groq.com> → API Keys → Create API Key (starts
-   with `gsk_`). In WhisperAsh: **Settings → Speech to Text** → paste it into **API Key**.
+3. **Sign in (no API key needed):** during setup choose **Use your WhisperAsh account**, or later open
+   **Settings → Profile**, enter your email and a password and click **Create account** (or **Sign in**).
+   Dictation then runs on the WhisperAsh server with a free daily word allowance (2,000 words a day by
+   default), and your history, dictionary and settings sync with your other PCs and the Android app.
+   Forgot your password? Click **Forgot password?**: the WhisperAsh admin sends you a temporary one.
 4. **Dictate:** click in any text box, **tap Right Ctrl**, speak, and tap Right Ctrl again (or hold Right Ctrl
    while speaking, then release). The cleaned text is pasted at the cursor.
-5. **Optional:**
-   * Sync between PCs: **Settings → Profile**. The sync server URL is pre-filled. Enter your email and a
-     password, then click **Create account**. A new account needs a sign-up code from the WhisperAsh owner.
-     On your other PCs, use **Log in** instead.
-   * Backup engine: a free Gemini key from <https://aistudio.google.com/apikey> in **Settings → Profile →
-     Backup engine (Gemini)**.
+5. **Optional, your own keys (no word limit):** **Settings → Profile → Speech engine → My own keys**, then a
+   free Groq key from <https://console.groq.com> (API Keys, starts with `gsk_`) in **Settings → Speech to
+   Text → API Key**, and optionally a free Gemini key from <https://aistudio.google.com/apikey> in
+   **Settings → Profile → Backup engine (Gemini)**.
 
 ### For AI agents installing WhisperAsh
 
@@ -35,10 +36,10 @@ Start-Process -FilePath (Join-Path $env:LOCALAPPDATA 'Programs\WhisperAsh\Whispe
   and on the Desktop.
 * **User data:** `%APPDATA%\WhisperAsh` (settings, history, encrypted keys, logs).
 * **Uninstall:** Windows Settings → Apps → Installed apps → WhisperAsh → Uninstall.
-* **What the agent can't do:** turning off Smart App Control (a Windows security setting) and pasting the
-  Groq key must be done by the user. Never put the key in a command line or a file.
-* **Verify the download** (v1.0.1): SHA-256
-  `65CD697E29FD85E7A2007483DBBB098989B3440A13B5D2E16889C4E2437BDE27`, size 169,068,176 bytes, e.g.
+* **What the agent can't do:** turning off Smart App Control (a Windows security setting) and signing in
+  (or pasting a Groq key) must be done by the user. Never put a password or key in a command line or a file.
+* **Verify the download** (v1.1.0): SHA-256
+  `C5637B11E6ADD2CE3213C97FCFD5657BD3770F2098993A47EA7D80C739B0A2DC`, size 169,078,375 bytes, e.g.
   `(Get-FileHash $setup -Algorithm SHA256).Hash`.
 * **Build from source instead:** see "Run it on this PC" and "Install on a second PC" below.
 
@@ -183,6 +184,67 @@ per-user salt, server-side pepper), never the password itself; and session token
 hashes only. It also stores your dictation history, dictionary and synced settings. History text is
 stored as-is in your D1 database (readable by your Cloudflare account), so don't dictate secrets
 you wouldn't keep there. After 8 wrong passwords, logins for that email are locked for 15 minutes.
+
+### Accounts: dictate with just an email and password
+
+The Worker can also serve dictation for signed-in users, using **your** Groq and Gemini keys, so the
+people you share WhisperAsh with only sign in. Each account gets a word allowance (default 2,000
+words a day, resetting at midnight India time); you manage it at `https://<your-worker>/admin`.
+
+1. Secrets (each command asks for the value; nothing is written to the repo):
+
+   ```powershell
+   npx.cmd wrangler secret put ADMIN_EMAILS
+   ```
+
+   ```powershell
+   npx.cmd wrangler secret put KEY_SECRET
+   ```
+
+   ```powershell
+   npx.cmd wrangler secret put GROQ_API_KEY
+   ```
+
+   ```powershell
+   npx.cmd wrangler secret put GEMINI_API_KEY
+   ```
+
+   `ADMIN_EMAILS`: the account email(s) allowed into `/admin` (comma-separated). `KEY_SECRET`: a long
+   random string that encrypts keys saved from the dashboard; generate it like `PEPPER` above. The
+   Groq/Gemini keys can also be set or changed later from the dashboard instead.
+2. Deploy (`npm.cmd run deploy`). The database gets its new tables on the first request; existing
+   accounts, sessions and synced data are kept.
+3. Open `/admin` and sign in with an admin account. There you can see every user and their words
+   today / this week, change the default allowance, set a user's own limit (per day or per week),
+   pause a user, reset a password, and set keys: your default Groq/Gemini keys, or keys just for one
+   user (that user then has no word limit).
+
+In the apps, **Settings → Speech engine** chooses between *WhisperAsh account* (default: the server
+and its keys) and *My own API keys* (the app calls Groq/Gemini directly with keys stored on the
+device; no WhisperAsh limit). Installs that already had their own Groq key keep using it.
+
+Groq's free tier is per Groq organization, so everyone on your keys shares about 2,000 speech
+requests and about 160 cleanups per model a day. For more than a few active users, move the Groq
+account to pay-as-you-go (roughly $0.0025 per dictation).
+
+**Before pushing to a public repo**, run the secret scan. It fails on API keys, private keys, your git
+email and anything listed in the git-ignored `.secrets-denylist` file (one value per line):
+
+```powershell
+node worker\scripts\check-secrets.mjs
+```
+
+Gateway tests (fake Groq/Gemini, no real keys) run against a local Worker started with test values:
+
+```powershell
+npm.cmd run db:test; npm.cmd run dev:test
+```
+
+Then, in a second window, from the same folder:
+
+```powershell
+npm.cmd run test:gateway
+```
 
 ### Test the Worker locally (no Cloudflare account needed)
 

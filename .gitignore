@@ -6,3 +6,6 @@ out/
 .dev.vars
 .wrangler/
 dist-whisperash/
+
+# Private list of values the secret scan must never let into git (emails, phone numbers)
+.secrets-denylist
