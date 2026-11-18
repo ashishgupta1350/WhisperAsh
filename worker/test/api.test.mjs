@@ -116,6 +116,20 @@ await step('pull pages through more than 500 items', async () => {
   assert.equal(total, 603);
   assert.equal(pages, 2);
 });
+await step('notes push and pull (Android Notes tab)', async () => {
+  const note = { title: 'Groceries', body: '- milk\n- eggs', raw: 'milk and eggs', pinned: false, created_ms: 5000 };
+  const p = await call('/sync/push', { token: tokenA, body: { items: [{ kind: 'notes', id: 'note-1', updated_at: 5000, data: note }] } });
+  assert.equal(p.status, 200);
+  let cursor = null, got;
+  for (;;) {
+    const r = await call('/sync/pull', { token: tokenB, body: { cursor } });
+    got = got || r.body.items.find((i) => i.kind === 'notes' && i.id === 'note-1');
+    cursor = r.body.cursor;
+    if (!r.body.more) break;
+  }
+  assert.equal(got.data.title, 'Groceries');
+  assert.equal(got.data.body, '- milk\n- eggs');
+});
 await step('other users cannot see this data', async () => {
   const r0 = await call('/auth/register', { body: { email: 'other-' + email, password, signupCode } });
   const r = await call('/sync/pull', { token: r0.body.token, body: { cursor: null } });

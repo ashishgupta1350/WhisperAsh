@@ -1,0 +1,283 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="robots" content="noindex">
+<title>WhisperAsh admin</title>
+<style>
+  :root { --bg:#f6f7f9; --card:#fff; --ink:#1d2330; --muted:#6b7280; --line:#e5e7eb; --accent:#c2410c; --ok:#047857; --bad:#b91c1c; }
+  @media (prefers-color-scheme: dark) { :root { --bg:#111317; --card:#1a1d23; --ink:#e8eaee; --muted:#9aa1ad; --line:#2a2f37; --accent:#fb923c; --ok:#34d399; --bad:#f87171; } }
+  * { box-sizing: border-box; }
+  body { margin:0; background:var(--bg); color:var(--ink); font:15px/1.45 system-ui, -apple-system, "Segoe UI", sans-serif; }
+  main { max-width:1100px; margin:0 auto; padding:24px 16px 64px; }
+  h1 { font-size:22px; margin:0 0 4px; } h2 { font-size:16px; margin:0 0 12px; }
+  .muted { color:var(--muted); font-size:13px; }
+  .card { background:var(--card); border:1px solid var(--line); border-radius:12px; padding:16px; margin-top:16px; }
+  .row { display:flex; gap:12px; flex-wrap:wrap; align-items:end; }
+  label { display:flex; flex-direction:column; gap:4px; font-size:13px; color:var(--muted); }
+  input, select { font:inherit; color:var(--ink); background:var(--bg); border:1px solid var(--line); border-radius:8px; padding:7px 9px; }
+  input[type=number] { width:110px; }
+  button { font:inherit; border:1px solid var(--line); background:var(--card); color:var(--ink); border-radius:8px; padding:7px 12px; cursor:pointer; }
+  button.primary { background:var(--accent); border-color:var(--accent); color:#fff; }
+  button.danger { color:var(--bad); }
+  button:disabled { opacity:.5; cursor:default; }
+  table { width:100%; border-collapse:collapse; font-size:14px; }
+  th, td { text-align:left; padding:8px 6px; border-bottom:1px solid var(--line); vertical-align:middle; }
+  th { font-size:12px; color:var(--muted); font-weight:600; }
+  .pill { display:inline-block; padding:1px 8px; border-radius:99px; font-size:12px; border:1px solid var(--line); }
+  .pill.ok { color:var(--ok); } .pill.bad { color:var(--bad); }
+  .bar { height:6px; background:var(--line); border-radius:4px; overflow:hidden; width:90px; margin-top:4px; }
+  .bar > i { display:block; height:100%; background:var(--accent); }
+  .scroll { overflow-x:auto; }
+  #msg { min-height:20px; margin-top:8px; font-size:14px; }
+  #msg.err { color:var(--bad); } #msg.ok { color:var(--ok); }
+  dialog { border:1px solid var(--line); border-radius:12px; background:var(--card); color:var(--ink); max-width:420px; width:calc(100% - 32px); }
+  dialog::backdrop { background:rgba(0,0,0,.4); }
+  .hidden { display:none !important; }
+</style>
+</head>
+<body>
+<main>
+  <h1>WhisperAsh admin</h1>
+  <div class="muted">Users, word limits and keys. Keys are stored encrypted and never shown again after saving.</div>
+
+  <section id="login" class="card">
+    <h2>Sign in</h2>
+    <div class="row">
+      <label>Email <input id="email" type="email" autocomplete="username"></label>
+      <label>Password <input id="password" type="password" autocomplete="current-password"></label>
+      <button id="loginBtn" class="primary">Sign in</button>
+    </div>
+    <div style="margin-top:10px"><button id="forgotBtn" style="border:0;padding:0;background:none;color:var(--accent)">Forgot password?</button></div>
+    <div class="muted" style="margin-top:4px">Another admin will see your request and can reset your password.</div>
+  </section>
+
+  <section id="app" class="hidden">
+    <div class="row" style="justify-content:space-between;margin-top:12px">
+      <div class="muted" id="who"></div>
+      <div class="row"><button id="refresh">Refresh</button><button id="logout">Sign out</button></div>
+    </div>
+
+    <div class="card hidden" id="resetCard">
+      <h2>Password reset requests</h2>
+      <div class="muted" style="margin-bottom:8px">People who tapped "Forgot password?". Reset makes a temporary password: send it to them (WhatsApp, SMS); they can change it after signing in.</div>
+      <div id="resets"></div>
+    </div>
+
+    <div class="card">
+      <h2>Defaults</h2>
+      <div class="row">
+        <label>Words per day for new users <input id="defLimit" type="number" min="0" step="100"></label>
+        <label>Cleanup calls per day (each user) <input id="chatCap" type="number" min="0" step="10"></label>
+        <button id="saveDefaults" class="primary">Save</button>
+      </div>
+      <div class="muted" style="margin-top:8px">A user's own limit, if set, overrides the default. Limits reset at midnight India time (weekly limits on Monday).</div>
+    </div>
+
+    <div class="card">
+      <h2>Your keys (used by everyone without their own)</h2>
+      <div id="keys"></div>
+      <div class="muted" id="keyNote" style="margin-top:8px"></div>
+    </div>
+
+    <div class="card">
+      <h2>Users <span class="muted" id="userCount"></span></h2>
+      <div class="scroll"><table>
+        <thead><tr><th>Email</th><th>Joined / last active</th><th>Used</th><th>Limit</th><th>Status</th><th>Own keys</th><th></th></tr></thead>
+        <tbody id="users"></tbody>
+      </table></div>
+    </div>
+  </section>
+  <div id="msg"></div>
+</main>
+
+<dialog id="keyDialog">
+  <h2 id="keyTitle">Set key</h2>
+  <p class="muted" id="keyHelp"></p>
+  <label>Key <input id="keyInput" type="password" autocomplete="off" spellcheck="false"></label>
+  <div class="row" style="margin-top:12px;justify-content:flex-end">
+    <button id="keyClear" class="danger">Remove key</button>
+    <button id="keyCancel">Cancel</button>
+    <button id="keySave" class="primary">Save</button>
+  </div>
+</dialog>
+
+<script>
+(() => {
+  const $ = (id) => document.getElementById(id);
+  let token = sessionStorage.getItem('wa_admin_token') || '';
+  let data = null;
+
+  function say(text, kind) { const m = $('msg'); m.textContent = text || ''; m.className = kind || ''; }
+  function el(tag, props = {}, ...kids) {
+    const n = document.createElement(tag);
+    for (const [k, v] of Object.entries(props)) {
+      if (k === 'class') n.className = v; else if (k.startsWith('on')) n.addEventListener(k.slice(2), v); else n[k] = v;
+    }
+    for (const k of kids) n.append(k instanceof Node ? k : document.createTextNode(String(k)));
+    return n;
+  }
+  const fmt = (n) => Number(n || 0).toLocaleString('en-IN');
+  const when = (ms) => ms ? new Date(ms).toLocaleString('en-IN', { dateStyle: 'medium', timeStyle: 'short' }) : '—';
+
+  async function api(path, method = 'GET', body) {
+    const res = await fetch(path, {
+      method,
+      headers: { 'content-type': 'application/json', ...(token ? { authorization: 'Bearer ' + token } : {}) },
+      body: body ? JSON.stringify(body) : undefined,
+    });
+    let j = {}; try { j = await res.json(); } catch {}
+    if (res.status === 401) { signOutLocal(); throw new Error('Signed out. Please sign in again.'); }
+    if (!res.ok) throw new Error(j.error === 'not_admin' ? 'This account is not an admin.' : (j.error || ('HTTP ' + res.status)));
+    return j;
+  }
+
+  function signOutLocal() {
+    token = ''; sessionStorage.removeItem('wa_admin_token');
+    $('app').classList.add('hidden'); $('login').classList.remove('hidden');
+  }
+
+  $('loginBtn').onclick = async () => {
+    say('Signing in…');
+    try {
+      const r = await api('/auth/login', 'POST', { email: $('email').value, password: $('password').value, device: 'Admin dashboard' });
+      token = r.token; sessionStorage.setItem('wa_admin_token', token);
+      $('password').value = '';
+      await load();
+    } catch (e) { say(e.message === 'invalid_credentials' ? 'Wrong email or password.' : e.message, 'err'); }
+  };
+  $('password').addEventListener('keydown', (e) => { if (e.key === 'Enter') $('loginBtn').click(); });
+  $('forgotBtn').onclick = async () => {
+    const email = $('email').value.trim();
+    if (!email) { say('Type your email above first.', 'err'); return; }
+    try { await api('/auth/forgot', 'POST', { email }); say('Request sent. An admin will reset your password and send you a temporary one.', 'ok'); }
+    catch (e) { say(e.message === 'invalid_email' ? 'That email does not look right.' : e.message, 'err'); }
+  };
+
+  function renderResets() {
+    const box = $('resets'); box.replaceChildren();
+    const list = data.resets || [];
+    $('resetCard').classList.toggle('hidden', list.length === 0);
+    for (const r of list) {
+      box.append(el('div', { class: 'row', style: 'margin-bottom:8px;align-items:center' },
+        el('strong', {}, r.email),
+        el('span', { class: 'muted' }, when(r.requested_at) + (r.note ? ' · "' + r.note + '"' : '')),
+        el('button', { class: 'primary', onclick: async () => {
+          if (!confirm('Reset the password of ' + r.email + '? They will be signed out everywhere.')) return;
+          try { const x = await api('/admin/api/users/' + r.user_id + '/reset-password', 'POST'); await load(); say('Temporary password for ' + r.email + ': ' + x.password + '  (shown once — send it to them)', 'ok'); }
+          catch (e) { say(e.message, 'err'); }
+        } }, 'Reset'),
+        el('button', { onclick: async () => {
+          try { await api('/admin/api/users/' + r.user_id + '/reset-request', 'DELETE'); await load(); } catch (e) { say(e.message, 'err'); }
+        } }, 'Dismiss')));
+    }
+  }
+  $('logout').onclick = async () => { try { await api('/auth/logout', 'POST'); } catch {} signOutLocal(); say('Signed out.'); };
+  $('refresh').onclick = () => load().catch((e) => say(e.message, 'err'));
+
+  $('saveDefaults').onclick = async () => {
+    try {
+      await api('/admin/api/config', 'PUT', { default_limit: Number($('defLimit').value), chat_daily_cap: Number($('chatCap').value) });
+      say('Defaults saved.', 'ok'); await load();
+    } catch (e) { say(e.message, 'err'); }
+  };
+
+  // Key dialog shared by default keys and per-user keys.
+  let keyTarget = null;
+  function openKeyDialog(target, title, help) {
+    keyTarget = target; $('keyTitle').textContent = title; $('keyHelp').textContent = help;
+    $('keyInput').value = ''; $('keyDialog').showModal(); $('keyInput').focus();
+  }
+  async function saveKey(value) {
+    const t = keyTarget; $('keyDialog').close();
+    try {
+      if (t.userId) await api('/admin/api/users/' + t.userId + '/keys', 'PUT', { provider: t.provider, key: value });
+      else await api('/admin/api/keys', 'PUT', { provider: t.provider, key: value });
+      say(value ? 'Key saved.' : 'Key removed.', 'ok'); await load();
+    } catch (e) { say(e.message === 'invalid_key' ? 'That does not look like a key.' : e.message, 'err'); }
+  }
+  $('keySave').onclick = () => saveKey($('keyInput').value.trim());
+  $('keyClear').onclick = () => saveKey(null);
+  $('keyCancel').onclick = () => $('keyDialog').close();
+
+  function renderKeys() {
+    const box = $('keys'); box.replaceChildren();
+    for (const p of ['groq', 'gemini']) {
+      const k = data.keys[p];
+      const label = k.source === 'dashboard' ? 'Saved here ' + (k.hint || '')
+        : k.source === 'worker_secret' ? 'Worker secret ' + (k.hint || '') : 'Not set';
+      box.append(el('div', { class: 'row', style: 'margin-bottom:8px;align-items:center' },
+        el('strong', { style: 'width:70px' }, p === 'groq' ? 'Groq' : 'Gemini'),
+        el('span', { class: 'pill ' + (k.source === 'none' ? 'bad' : 'ok') }, label),
+        el('button', { disabled: !data.canStoreKeys, onclick: () => openKeyDialog({ provider: p },
+          'Default ' + (p === 'groq' ? 'Groq' : 'Gemini') + ' key',
+          'Used for every user who has no key of their own. Replaces the Worker secret while set.') }, 'Change')));
+    }
+    $('keyNote').textContent = data.canStoreKeys ? '' : 'To save keys here, set the KEY_SECRET Worker secret first.';
+  }
+
+  function renderUsers() {
+    const tb = $('users'); tb.replaceChildren();
+    $('userCount').textContent = '(' + data.users.length + ')';
+    for (const u of data.users) {
+      const limit = u.word_limit ?? data.config.default_limit;
+      const period = u.limit_period === 'week' ? 'week' : 'day';
+      const used = period === 'week' ? u.words_week : u.words_today;
+      const pct = limit ? Math.min(100, Math.round(used * 100 / limit)) : 100;
+      const limitIn = el('input', { type: 'number', min: 0, step: 100, value: u.word_limit ?? '', placeholder: String(data.config.default_limit) });
+      const periodIn = el('select', {}, el('option', { value: 'day' }, 'per day'), el('option', { value: 'week' }, 'per week'));
+      periodIn.value = period;
+      const blocked = u.status === 'blocked';
+      const save = el('button', { class: 'primary', onclick: async () => {
+        try {
+          await api('/admin/api/users/' + u.id, 'PATCH', {
+            word_limit: limitIn.value === '' ? null : Number(limitIn.value),
+            limit_period: periodIn.value,
+          });
+          say('Saved ' + u.email + '.', 'ok'); await load();
+        } catch (e) { say(e.message, 'err'); }
+      } }, 'Save');
+      const block = el('button', { class: blocked ? '' : 'danger', onclick: async () => {
+        if (!blocked && !confirm('Pause ' + u.email + '? They can still use their own keys in the app.')) return;
+        try { await api('/admin/api/users/' + u.id, 'PATCH', { status: blocked ? 'active' : 'blocked' }); await load(); }
+        catch (e) { say(e.message, 'err'); }
+      } }, blocked ? 'Unpause' : 'Pause');
+      const reset = el('button', { onclick: async () => {
+        if (!confirm('Reset the password of ' + u.email + '? They will be signed out everywhere.')) return;
+        try { const r = await api('/admin/api/users/' + u.id + '/reset-password', 'POST'); say('Temporary password for ' + u.email + ': ' + r.password + '  (shown once — send it to them)', 'ok'); }
+        catch (e) { say(e.message, 'err'); }
+      } }, 'Reset password');
+      const keyCell = el('div', {});
+      for (const p of ['groq', 'gemini']) {
+        const has = u.keys && u.keys[p] !== undefined;
+        keyCell.append(el('button', { style: 'margin:2px', disabled: !data.canStoreKeys,
+          onclick: () => openKeyDialog({ userId: u.id, provider: p }, (p === 'groq' ? 'Groq' : 'Gemini') + ' key for ' + u.email,
+            'This user\'s requests will use this key instead of yours, with no word limit.') },
+          (p === 'groq' ? 'Groq' : 'Gemini') + (has ? ' ' + (u.keys[p] || '✓') : ' +')));
+      }
+      tb.append(el('tr', {},
+        el('td', {}, u.email, u.is_admin ? el('span', { class: 'pill', style: 'margin-left:6px' }, 'admin') : ''),
+        el('td', { class: 'muted' }, when(u.created_at), el('br'), when(u.last_active)),
+        el('td', {}, fmt(used) + ' / ' + fmt(limit), el('div', { class: 'bar' }, el('i', { style: 'width:' + pct + '%' })),
+          el('div', { class: 'muted' }, 'today ' + fmt(u.words_today) + ' · week ' + fmt(u.words_week))),
+        el('td', {}, el('div', { class: 'row' }, limitIn, periodIn, save)),
+        el('td', {}, el('span', { class: 'pill ' + (blocked ? 'bad' : 'ok') }, blocked ? 'paused' : 'active')),
+        el('td', {}, keyCell),
+        el('td', {}, el('div', { class: 'row' }, block, reset))));
+    }
+  }
+
+  async function load() {
+    data = await api('/admin/api/overview');
+    $('login').classList.add('hidden'); $('app').classList.remove('hidden');
+    $('who').textContent = 'Today (India): ' + data.today;
+    $('defLimit').value = data.config.default_limit; $('chatCap').value = data.config.chat_daily_cap;
+    renderResets(); renderKeys(); renderUsers(); say('');
+  }
+
+  if (token) load().catch((e) => say(e.message, 'err'));
+})();
+</script>
+</body>
+</html>

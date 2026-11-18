@@ -8,6 +8,18 @@ database_name = "whisperash"
 # Created with: npx wrangler d1 create whisperash (not a secret)
 database_id = "67752b04-9c45-491f-9f07-e1b4483672a1"
 
+# The admin dashboard page is bundled as text.
+[[rules]]
+type = "Text"
+globs = ["**/*.html"]
+fallthrough = true
+
 # Secrets (set with `npx wrangler secret put NAME`, never written here):
-#   PEPPER       - long random string mixed into every password hash
-#   SIGNUP_CODE  - optional; if set, new accounts need this code to register
+#   PEPPER         - long random string mixed into every password hash
+#   SIGNUP_CODE    - optional; if set, new accounts need this code to register
+#   ADMIN_EMAILS   - comma-separated emails that may open /admin
+#   KEY_SECRET     - long random string; encrypts keys saved from the dashboard
+#   GROQ_API_KEY   - default Groq key for signed-in users (or set it in the dashboard)
+#   GEMINI_API_KEY - default Gemini key (backup speech engine)
+# Optional vars: SIGNUPS_PER_IP (default 5 a day). Test-only: GROQ_UPSTREAM, GEMINI_UPSTREAM,
+# ALLOW_TEST_CLOCK=1 (lets tests set the time with an x-test-now header; never set in production).

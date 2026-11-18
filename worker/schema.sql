@@ -30,3 +30,19 @@ CREATE TABLE IF NOT EXISTS items (
   PRIMARY KEY (user_id, kind, id)
 );
 CREATE INDEX IF NOT EXISTS items_pull ON items(user_id, server_ts, kind, id);
+
+-- Accounts gateway (added 2026-11). The Worker also creates these itself on first request
+-- (ensureSchema in src/index.js) and adds the users columns below to older databases.
+-- users: word_limit INTEGER (NULL = default), limit_period TEXT ('day'|'week'),
+--        status TEXT NOT NULL DEFAULT 'active' ('active'|'blocked'), last_active INTEGER
+CREATE TABLE IF NOT EXISTS usage (
+  user_id TEXT NOT NULL, day TEXT NOT NULL,          -- day = India date (YYYY-MM-DD)
+  words INTEGER NOT NULL DEFAULT 0, stt_requests INTEGER NOT NULL DEFAULT 0, chat_requests INTEGER NOT NULL DEFAULT 0,
+  PRIMARY KEY (user_id, day)
+);
+CREATE TABLE IF NOT EXISTS user_keys (               -- keys the admin set for one user, AES-GCM encrypted
+  user_id TEXT NOT NULL, provider TEXT NOT NULL, enc TEXT NOT NULL, hint TEXT, updated_at INTEGER NOT NULL,
+  PRIMARY KEY (user_id, provider)
+);
+CREATE TABLE IF NOT EXISTS config (key TEXT PRIMARY KEY, value TEXT NOT NULL);
+CREATE TABLE IF NOT EXISTS signup_ips (ip TEXT NOT NULL, day TEXT NOT NULL, count INTEGER NOT NULL, PRIMARY KEY (ip, day));
