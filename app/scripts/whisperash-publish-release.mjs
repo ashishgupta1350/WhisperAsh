@@ -53,7 +53,7 @@ const notes = [
   "",
   "1. Turn off Smart App Control (Windows Security > App & browser control). The app is not code-signed.",
   "2. Run the installer. If Windows says \"Windows protected your PC\", click More info > Run anyway.",
-  "3. Paste a free Groq API key (console.groq.com) in Settings > Speech to Text.",
+  "3. Sign in or create an account (Settings > Profile, or during setup): no API key needed, free words every day. Prefer your own keys? Settings > Profile > Speech engine > My own keys.",
   "4. Tap Right Ctrl to start and stop dictation, or hold it while speaking.",
   "",
   "Full guide and unattended-install commands: see the README.",
