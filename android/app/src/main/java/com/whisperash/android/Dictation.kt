@@ -23,7 +23,7 @@ class NoSpeechException : Exception("No speech heard")
  */
 class DictationEngine(private val app: WhisperAshApp) {
 
-    fun process(rec: Recording, targetPkg: String?, stopAt: Long, cleanupModelOverride: String? = null, sttOverride: String? = null, onStage: (String) -> Unit = {}): DictationResult {
+    fun process(rec: Recording, targetPkg: String?, stopAt: Long, cleanupModelOverride: String? = null, sttOverride: String? = null, skipCleanup: Boolean = false, onStage: (String) -> Unit = {}): DictationResult {
         val s = app.settings
         val t = JSONObject()
         val audioSec = rec.durationMs / 1000.0
@@ -32,7 +32,7 @@ class DictationEngine(private val app: WhisperAshApp) {
         t.put("encode_flush_ms", System.currentTimeMillis() - stopAt)
         try {
             // A clip with no voice at all would only make Whisper invent "Thank you."
-            if (rec.peak < 0.02 || rec.speechMs < 150) throw NoSpeechException()
+            if (!LevelMeter.hasSpeech(rec.peak, rec.speechMs)) throw NoSpeechException()
             val quiet = rec.peak < 0.08
             val language = s.language
             val pref = s.hindiScript
@@ -44,7 +44,7 @@ class DictationEngine(private val app: WhisperAshApp) {
             val sttStart = System.currentTimeMillis()
             var note: String? = null
             val stt: SttResult = try {
-                if (sttOverride == "gemini" || (!app.secure.has(SecureStore.GROQ_KEY) && app.gemini.available() && s.geminiBackup)) {
+                if (sttOverride == "gemini" || (app.groqTarget() == null && app.gemini.available() && s.geminiBackup)) {
                     app.gemini.transcribe(rec.file, rec.mime, language, dictionary)
                 } else {
                     val notes = ArrayList<String>()
@@ -56,7 +56,11 @@ class DictationEngine(private val app: WhisperAshApp) {
                     r
                 }
             } catch (e: ApiException) {
-                if (e.provider == "Groq" && s.geminiBackup && app.gemini.available() && (e.retryable || e.status == 401)) {
+                // A refused own Groq key (401) or a busy/failing service falls back to Gemini; the account's
+                // own answers (limit reached, paused, signed out) are shown as they are.
+                val ownKeyRefused = e.provider == "Groq" && e.status == 401 && e.code != "not_set_up"
+                if ((e.provider == "Groq" || e.provider == "WhisperAsh") && !e.final && s.geminiBackup &&
+                    app.gemini.available() && (e.retryable || ownKeyRefused)) {
                     Log.w(TAG, "Groq STT failed (${e.status}), using Gemini backup")
                     note = "Groq failed (${e.status}); Gemini backup used"
                     app.gemini.transcribe(rec.file, rec.mime, language, dictionary)
@@ -75,12 +79,14 @@ class DictationEngine(private val app: WhisperAshApp) {
             val heard = Prompts.fixSpokenEmails(raw)
             var text = heard
             var cleanupModel: String? = null
-            if (s.useCleanup && !Prompts.isShortCleanUtterance(raw, pref)) {
+            if (!skipCleanup && s.useCleanup && !Prompts.isShortCleanUtterance(raw, pref)) {
                 onStage("Polishing…")
                 val cleanStart = System.currentTimeMillis()
                 val category = Prompts.appCategory(targetPkg)
                 val tone = if (s.toneEnabled) category to (s.toneStyles[category] ?: "formal") else null
-                val system = Prompts.buildCleanupSystemPrompt(s.agentName, language, pref, dictionary, tone)
+                // The account email helps Whisper spell it; cleanup no longer gets it (fixSpokenEmails handles
+                // addresses in code), matching the desktop's trimmed prompt.
+                val system = Prompts.buildCleanupSystemPrompt(s.agentName, language, pref, app.db.dictionary(), tone)
                 val maxTokens = (raw.length + 200).coerceIn(256, 4096)
                 val models = cleanupModelOverride?.let { listOf(it) } ?: listOf(s.cleanupModel, Settings.FALLBACK_CLEANUP_MODEL).distinct()
                 for (m in models) {
@@ -93,6 +99,24 @@ class DictationEngine(private val app: WhisperAshApp) {
                         // An empty answer for a real sentence is a model failure, not "filler only".
                         text = Prompts.fixSpokenEmails(if (cleaned.isEmpty() && rawWords > 3) heard else cleaned)
                         cleanupModel = m
+                        // Cleanup must never delete what was said: one retry naming the lost words, else the raw text.
+                        val kept = Prompts.checkRetention(heard, text)
+                        if (kept.flagged) {
+                            Log.i(TAG, "Cleanup dropped words ${kept.gone.take(8)}; retrying")
+                            t.put("retention_retry", kept.gone.take(8).joinToString(","))
+                            text = try {
+                                val r2 = app.groq.chat(m, system, Prompts.retentionRetry(heard, kept.gone), maxTokens)
+                                app.db.recordUsage("llm", 0.0, r2.tokens, m)
+                                t.put("cleanup_tokens", r.tokens + r2.tokens)
+                                val second = Prompts.fixSpokenEmails(Prompts.tidyModelOutput(r2.text))
+                                if (second.isNotBlank() && !Prompts.checkRetention(heard, second).flagged) second
+                                else heard.also { t.put("retention_fallback", "raw") }
+                            } catch (e: Exception) {
+                                Log.w(TAG, "Retention retry failed: ${e.message}")
+                                t.put("retention_fallback", "raw")
+                                heard
+                            }
+                        }
                         break
                     } catch (e: Exception) {
                         Log.w(TAG, "Cleanup with $m failed: ${e.message}")
@@ -180,7 +204,7 @@ class DictationEngine(private val app: WhisperAshApp) {
         val first: String? = try {
             app.groq.transcribe(file, mime, model, lang, prompt).text.trim().also { app.db.recordUsage("stt", seconds, 0, model) }
         } catch (e: ApiException) {
-            if (label == "whole" || e.status == 401) throw e
+            if (label == "whole" || e.status == 401 || e.final) throw e
             null
         }
         val check = if (first == null) TranscriptGuard.Check(true, "request_failed") else TranscriptGuard.check(first, seconds, prompt)

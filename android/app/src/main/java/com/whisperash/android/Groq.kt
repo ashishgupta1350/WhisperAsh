@@ -24,32 +24,48 @@ object GroqLimits {
     const val LLM_TPD = 200_000
 }
 
-class ApiException(val status: Int, val provider: String, message: String) : IOException(message) {
+class ApiException(val status: Int, val provider: String, message: String, val code: String? = null) : IOException(message) {
+    /** The WhisperAsh account said no (limit reached, paused, signed out): no backup engine will help. */
+    val final get() = code in FINAL_CODES
     /** Worth trying the backup provider: rate limit, server trouble, or no answer. */
-    val retryable get() = status == 0 || status == 408 || status == 429 || status >= 500
+    val retryable get() = !final && (status == 0 || status == 408 || status == 429 || status >= 500)
+
+    companion object {
+        val FINAL_CODES = setOf("word_limit", "chat_limit", "account_blocked", "session_expired")
+    }
 }
+
+/**
+ * Where a request goes: the WhisperAsh account gateway (the sync server proxies to the owner's
+ * Groq/Gemini keys, with a word limit) or the provider directly with the user's own key.
+ */
+data class ApiTarget(val base: String, val token: String, val viaAccount: Boolean, val warmUrl: String)
 
 data class SttResult(val text: String, val language: String?, val noSpeechProb: Double, val model: String, val provider: String)
 data class CleanupResult(val text: String, val model: String, val tokens: Int)
 
-class GroqClient(private val http: OkHttpClient, private val key: () -> String?) {
+class GroqClient(private val http: OkHttpClient, private val target: () -> ApiTarget?) {
     // Cleanup must never hold the text back for long: past 15 s the raw transcript is used.
     private val chatHttp = http.newBuilder().callTimeout(15, java.util.concurrent.TimeUnit.SECONDS).build()
     private val sttHttp = http.newBuilder().callTimeout(60, java.util.concurrent.TimeUnit.SECONDS).build()
     /** Last x-ratelimit-* headers Groq sent, for the usage screen. */
     @Volatile var lastRateHeaders: Map<String, String> = emptyMap()
         private set
+    /** Words left on the WhisperAsh account after the last request (account mode only). */
+    @Volatile var lastWordsLeft: Int? = null
+        private set
 
     /** Opens the TLS connection while the user is still talking (no key sent). */
     fun warmUp() {
         try {
-            http.newCall(Request.Builder().url("$BASE/").head().build()).execute().close()
+            val url = target()?.warmUrl ?: "$BASE/"
+            http.newCall(Request.Builder().url(url).head().build()).execute().close()
         } catch (_: Exception) {
         }
     }
 
     fun transcribe(audio: File, mime: String, model: String, language: String, prompt: String): SttResult {
-        val apiKey = key() ?: throw ApiException(401, "Groq", "Add your Groq API key in WhisperAsh first")
+        val t = target() ?: throw notSetUp()
         val body = MultipartBody.Builder().setType(MultipartBody.FORM)
             .addFormDataPart("file", audio.name, audio.asRequestBody(mime.toMediaType()))
             .addFormDataPart("model", model)
@@ -60,9 +76,9 @@ class GroqClient(private val http: OkHttpClient, private val key: () -> String?)
                 if (prompt.isNotBlank()) addFormDataPart("prompt", prompt)
             }
             .build()
-        val req = Request.Builder().url("$BASE/openai/v1/audio/transcriptions")
-            .header("Authorization", "Bearer $apiKey").post(body).build()
-        val json = call(sttHttp, req)
+        val req = Request.Builder().url("${t.base}/openai/v1/audio/transcriptions")
+            .header("Authorization", "Bearer ${t.token}").post(body).build()
+        val json = call(sttHttp, req, t)
         var noSpeech = 0.0
         json.optJSONArray("segments")?.let { segs ->
             if (segs.length() > 0) {
@@ -75,7 +91,7 @@ class GroqClient(private val http: OkHttpClient, private val key: () -> String?)
     }
 
     fun chat(model: String, system: String, user: String, maxTokens: Int): CleanupResult {
-        val apiKey = key() ?: throw ApiException(401, "Groq", "Add your Groq API key in WhisperAsh first")
+        val t = target() ?: throw notSetUp()
         val body = JSONObject().apply {
             put("model", model)
             put("messages", JSONArray().apply {
@@ -88,50 +104,56 @@ class GroqClient(private val http: OkHttpClient, private val key: () -> String?)
             put("reasoning_effort", if (model.contains("qwen")) "none" else "low")
             if (model.contains("gpt-oss")) put("include_reasoning", false)
         }
-        val req = Request.Builder().url("$BASE/openai/v1/chat/completions")
-            .header("Authorization", "Bearer $apiKey")
+        val req = Request.Builder().url("${t.base}/openai/v1/chat/completions")
+            .header("Authorization", "Bearer ${t.token}")
             .post(body.toString().toRequestBody(JSON)).build()
-        val json = call(chatHttp, req)
+        val json = call(chatHttp, req, t)
         val msg = json.getJSONArray("choices").getJSONObject(0).getJSONObject("message")
         val tokens = json.optJSONObject("usage")?.optInt("total_tokens", 0) ?: 0
         return CleanupResult(msg.optString("content", ""), model, tokens)
     }
 
-    private fun call(client: OkHttpClient, req: Request): JSONObject {
+    private fun notSetUp() = ApiException(401, "Groq", "Sign in to WhisperAsh (Account tab) or add your own Groq key", "not_set_up")
+
+    private fun call(client: OkHttpClient, req: Request, t: ApiTarget): JSONObject {
+        val provider = if (t.viaAccount) "WhisperAsh" else "Groq"
         val res: Response = try {
             client.newCall(req).execute()
         } catch (e: IOException) {
-            throw ApiException(0, "Groq", "No connection to Groq (${e.message ?: e.javaClass.simpleName})")
+            throw ApiException(0, provider, "No connection to $provider (${e.message ?: e.javaClass.simpleName})")
         }
         res.use {
             val headers = HashMap<String, String>()
             for ((name, value) in it.headers) if (name.lowercase().startsWith("x-ratelimit")) headers[name.lowercase()] = value
             if (headers.isNotEmpty()) lastRateHeaders = headers
+            it.header("x-whisperash-words-left")?.toIntOrNull()?.let { left -> lastWordsLeft = left }
             val text = it.body.string()
-            if (!it.isSuccessful) {
-                val msg = try {
-                    JSONObject(text).optJSONObject("error")?.optString("message")
-                } catch (_: Exception) {
-                    null
-                }
-                throw ApiException(it.code, "Groq", "Groq ${it.code}: ${msg ?: text.take(200)}")
-            }
+            if (!it.isSuccessful) throw errorFrom(provider, it.code, text, t.viaAccount)
             return JSONObject(text)
         }
     }
 
     companion object {
+        /** Reads an OpenAI-style error; account errors keep the server's own (already friendly) words. */
+        fun errorFrom(provider: String, status: Int, text: String, viaAccount: Boolean): ApiException {
+            val err = try { JSONObject(text).optJSONObject("error") } catch (_: Exception) { null }
+            val msg = err?.optString("message")?.takeIf { m -> m.isNotBlank() }
+            val code = err?.optString("code")?.takeIf { c -> c.isNotBlank() }
+            return if (viaAccount && msg != null) ApiException(status, provider, msg, code)
+            else ApiException(status, provider, "$provider $status: ${msg ?: text.take(200)}", code)
+        }
+
         const val BASE = "https://api.groq.com"
         val JSON = "application/json".toMediaType()
     }
 }
 
 /** Gemini backup transcription (Interactions API, model gemini-3.5-transcribe), as on the desktop. */
-class GeminiClient(private val http: OkHttpClient, private val key: () -> String?) {
-    fun available() = !key().isNullOrBlank()
+class GeminiClient(private val http: OkHttpClient, private val target: () -> ApiTarget?) {
+    fun available() = target() != null
 
     fun transcribe(audio: File, mime: String, language: String, dictionary: List<String>): SttResult {
-        val apiKey = key() ?: throw ApiException(401, "Gemini", "No Gemini key")
+        val t = target() ?: throw ApiException(401, "Gemini", "No Gemini key")
         val cfg = JSONObject()
         if (language != "auto") cfg.put("language_codes", JSONArray().put(language))
         if (dictionary.isNotEmpty()) cfg.put("custom_vocabulary", JSONArray(dictionary))
@@ -145,8 +167,8 @@ class GeminiClient(private val http: OkHttpClient, private val key: () -> String
             }))
             if (cfg.length() > 0) put("generation_config", JSONObject().put("transcription_config", cfg))
         }
-        val req = Request.Builder().url("https://generativelanguage.googleapis.com/v1beta/interactions")
-            .header("x-goog-api-key", apiKey)
+        val req = Request.Builder().url("${t.base}/v1beta/interactions")
+            .apply { if (t.viaAccount) header("Authorization", "Bearer ${t.token}") else header("x-goog-api-key", t.token) }
             .post(body.toString().toRequestBody(GroqClient.JSON)).build()
         val res = try {
             http.newCall(req).execute()
@@ -155,7 +177,7 @@ class GeminiClient(private val http: OkHttpClient, private val key: () -> String
         }
         res.use {
             val text = it.body.string()
-            if (!it.isSuccessful) throw ApiException(it.code, "Gemini", "Gemini ${it.code}: ${text.take(200)}")
+            if (!it.isSuccessful) throw GroqClient.errorFrom(if (t.viaAccount) "WhisperAsh" else "Gemini", it.code, text, t.viaAccount)
             val json = JSONObject(text)
             val status = json.optString("status", "completed")
             if (status != "completed") throw ApiException(500, "Gemini", "Gemini transcription $status")
@@ -178,5 +200,6 @@ class GeminiClient(private val http: OkHttpClient, private val key: () -> String
 
     companion object {
         const val MODEL = "gemini-3.5-transcribe"
+        const val BASE = "https://generativelanguage.googleapis.com"
     }
 }

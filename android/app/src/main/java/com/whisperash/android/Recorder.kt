@@ -124,7 +124,7 @@ fun pcmToShorts(bytes: ByteArray, len: Int = bytes.size): ShortArray {
 }
 
 /** Mic capture on its own thread; level() feeds the keyboard's ring. */
-class MicRecorder(private val cacheDir: File) {
+class MicRecorder(private val cacheDir: File, private val maxMs: Long = MAX_MS) {
     @Volatile private var running = false
     @Volatile var level = 0.0
         private set
@@ -166,7 +166,7 @@ class MicRecorder(private val cacheDir: File) {
                         level = meter.lastLevel
                         enc.feed(buf, n)
                     } else if (n < 0) throw IllegalStateException("Mic read failed ($n)")
-                    if (System.currentTimeMillis() - startedAt > MAX_MS) running = false
+                    if (System.currentTimeMillis() - startedAt > maxMs) running = false
                 }
                 rec.stop()
                 val ok = enc.finish()
@@ -234,7 +234,19 @@ class LevelMeter(private val rate: Int) {
         if (p / 32768.0 > peak) peak = p / 32768.0
         val ms = n * 1000L / rate
         durationMs += ms
-        if (rms > 0.01) speechMs += ms
+        if (isSpeechWindow(rms, p / 32768.0)) speechMs += ms
+    }
+
+    companion object {
+        // Same rule as the desktop's localSpeechGate.js: quiet laptop and phone mics speak at
+        // RMS 0.003–0.01, so a higher bar threw away real dictations (PC ids 43, 55, 66).
+        const val SPEECH_WINDOW_RMS = 0.003
+        const val SPEECH_WINDOW_PEAK = 0.02
+
+        fun isSpeechWindow(rms: Double, peak: Double) = rms >= SPEECH_WINDOW_RMS && peak >= SPEECH_WINDOW_PEAK
+
+        /** Any 100 ms window of speech is enough; silence goes nowhere, so Whisper can't invent "Thank you." */
+        fun hasSpeech(peak: Double, speechMs: Long) = peak >= SPEECH_WINDOW_PEAK && speechMs > 0
     }
 }
 

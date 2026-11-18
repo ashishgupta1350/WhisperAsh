@@ -113,14 +113,15 @@ class MainActivity : ComponentActivity() {
 
     @Composable
     private fun AppScreen() {
-        var tab by remember { mutableIntStateOf(0) }
+        // Notes first once setup is done; Home (the setup checklist) until then.
+        var tab by remember { mutableIntStateOf(if (keyboardEnabled() && app.canDictate()) 1 else 0) }
         val t = tick.intValue
         val dataVersion by app.sync.dataVersion.collectAsState()
         Scaffold(
             containerColor = Bg,
             bottomBar = {
                 NavigationBar(containerColor = CardBg) {
-                    listOf("Home" to "⌂", "History" to "☰", "Words" to "Aa", "Settings" to "⚙", "Account" to "☁").forEachIndexed { i, (label, glyph) ->
+                    listOf("Home" to "⌂", "Notes" to "📝", "History" to "☰", "Words" to "Aa", "Settings" to "⚙", "Account" to "☁").forEachIndexed { i, (label, glyph) ->
                         NavigationBarItem(
                             selected = tab == i, onClick = { tab = i },
                             icon = { Text(glyph, fontSize = 18.sp) }, label = { Text(label, fontSize = 11.sp) },
@@ -132,10 +133,11 @@ class MainActivity : ComponentActivity() {
             Box(Modifier.padding(pad).fillMaxSize()) {
                 when (tab) {
                     0 -> HomeTab(t + dataVersion) { tab = it }
-                    1 -> HistoryTab(dataVersion)
-                    2 -> DictionaryTab(dataVersion)
-                    3 -> SettingsTab(dataVersion)
-                    4 -> AccountTab()
+                    1 -> NotesTab(app, dataVersion, hasMic = { hasMic() }, askMic = { askMic() })
+                    2 -> HistoryTab(dataVersion)
+                    3 -> DictionaryTab(dataVersion)
+                    4 -> SettingsTab(dataVersion)
+                    5 -> AccountTab()
                 }
             }
         }
@@ -157,11 +159,34 @@ class MainActivity : ComponentActivity() {
                     startActivity(Intent(AndroidSettings.ACTION_INPUT_METHOD_SETTINGS))
                 }
                 Step("2. Allow the microphone", hasMic(), "Allow") { askMic() }
-                Step("3. Add your Groq API key", app.secure.has(SecureStore.GROQ_KEY), "Add") { goTo(3) }
+                if (app.useAccount()) {
+                    Step("3. Sign in with your email and password", app.sync.signedIn, "Sign in") { goTo(5) }
+                } else {
+                    Step("3. Add your Groq API key", app.secure.has(SecureStore.GROQ_KEY), "Add") { goTo(4) }
+                }
                 Step("4. Switch to WhisperAsh (🌐 key or here)", keyboardSelected(), "Switch") {
                     (getSystemService(Context.INPUT_METHOD_SERVICE) as InputMethodManager).showInputMethodPicker()
                 }
-                Step("5. Log in to sync with your PC (optional)", app.sync.signedIn, "Log in") { goTo(4) }
+                if (!app.useAccount()) Step("5. Log in to sync with your PC (optional)", app.sync.signedIn, "Log in") { goTo(5) }
+            }
+
+            if (app.useAccount()) {
+                var plan by remember { mutableStateOf(app.sync.lastPlan) }
+                LaunchedEffect(version, refresh, app.sync.signedIn) { plan = withContext(Dispatchers.IO) { app.sync.fetchPlan() } ?: plan }
+                Section("Your words") {
+                    val p = plan
+                    when {
+                        !app.sync.signedIn -> Small("Sign in to start dictating. Every account gets free words each day.")
+                        p == null -> Small("Checking your allowance…")
+                        else -> {
+                            if (p.status != "blocked" && !p.ownGroqKey) {
+                                Big("%,d".format(p.left), "words left ${p.periodWord} (of %,d)".format(p.limit))
+                                val reset = DateFormat.getDateTimeInstance(DateFormat.MEDIUM, DateFormat.SHORT).format(Date(p.resetsAt))
+                                Small("Resets $reset. Need more? Ask the WhisperAsh admin for a bigger package.")
+                            } else Small(p.summary())
+                        }
+                    }
+                }
             }
 
             Section("Try it") {
@@ -172,7 +197,7 @@ class MainActivity : ComponentActivity() {
                 )
             }
 
-            Section("Free words left (Groq free tier)") {
+            if (!app.useAccount()) Section("Free words left (Groq free tier)") {
                 Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
                     Big("%,d".format(usage.leftToday), "left today")
                     Big("%,d".format(usage.leftMonth), "left this month")
@@ -292,11 +317,21 @@ class MainActivity : ComponentActivity() {
         var r by remember { mutableIntStateOf(0) }
         val v = r + version
         Column(Modifier.verticalScroll(rememberScrollState()).padding(16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
-            Section("API keys (stored encrypted on this phone)") {
-                KeyField("Groq API key", SecureStore.GROQ_KEY) { r++ }
-                Small("Free key: console.groq.com → API Keys. Used for Whisper and cleanup.")
-                Spacer(Modifier.height(8.dp))
-                KeyField("Gemini API key (optional backup)", SecureStore.GEMINI_KEY) { r++ }
+            Section("Speech engine") {
+                val account = app.useAccount()
+                Choice(
+                    listOf(Settings.ENGINE_ACCOUNT to "WhisperAsh account", Settings.ENGINE_OWN to "My own keys"),
+                    if (account) Settings.ENGINE_ACCOUNT else Settings.ENGINE_OWN, v,
+                ) { s.engineSource = it; r++ }
+                if (account) {
+                    Small("Recommended. Just sign in on the Account tab: WhisperAsh's keys are used, with a daily word allowance shown on Home. Nothing to set up.")
+                } else {
+                    Small("Your keys are stored encrypted on this phone and never leave it. No WhisperAsh word limit; Groq's own free limits apply.")
+                    KeyField("Groq API key", SecureStore.GROQ_KEY) { r++ }
+                    Small("Free key: console.groq.com → API Keys. Used for Whisper and cleanup.")
+                    Spacer(Modifier.height(8.dp))
+                    KeyField("Gemini API key (optional backup)", SecureStore.GEMINI_KEY) { r++ }
+                }
                 Toggle("Use Gemini when Groq fails", s.geminiBackup) { s.geminiBackup = it; r++ }
             }
             Section("Language") {
@@ -363,10 +398,13 @@ class MainActivity : ComponentActivity() {
         var busy by remember { mutableStateOf(false) }
         var message by remember { mutableStateOf("") }
         var registerMode by remember { mutableStateOf(false) }
+        var showAdvanced by remember { mutableStateOf(app.settings.serverUrl != Settings.DEFAULT_SERVER) }
+        var forgotMode by remember { mutableStateOf(false) }
+        var info by remember { mutableStateOf("") }
         LaunchedEffect(Unit) { app.sync.refreshState() }
 
         fun run(block: suspend () -> Unit) {
-            busy = true; message = ""
+            busy = true; message = ""; info = ""
             scope.launch {
                 try { withContext(Dispatchers.IO) { block() } } catch (e: Exception) { message = friendly(e.message) }
                 busy = false
@@ -389,14 +427,42 @@ class MainActivity : ComponentActivity() {
                         OutlinedButton(onClick = { run { app.sync.logout() } }) { Text("Log out") }
                     }
                 }
-                Small("History, dictionary and settings (language, Hindi script, cleanup, tone) sync with the WhisperAsh desktop app. API keys never leave this phone.")
+                Small("History, dictionary, notes and settings (language, Hindi script, cleanup, tone) sync with the WhisperAsh desktop app. Your own API keys, if you add any, never leave this phone.")
+                var current by remember { mutableStateOf("") }
+                var newPassword by remember { mutableStateOf("") }
+                Section("Change password") {
+                    OutlinedTextField(current, { current = it }, label = { Text("Current (or temporary) password") }, singleLine = true, modifier = Modifier.fillMaxWidth(),
+                        visualTransformation = PasswordVisualTransformation(), keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Password))
+                    OutlinedTextField(newPassword, { newPassword = it }, label = { Text("New password (8+ characters)") }, singleLine = true, modifier = Modifier.fillMaxWidth(),
+                        visualTransformation = PasswordVisualTransformation(), keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Password))
+                    Button(enabled = !busy && current.isNotEmpty() && newPassword.length >= 8, onClick = {
+                        val c = current; val n = newPassword
+                        run { app.sync.changePassword(c, n); info = "Password changed. Your other devices were signed out." }
+                        current = ""; newPassword = ""
+                    }) { Text(if (busy) "Please wait…" else "Change password") }
+                }
+            } else if (forgotMode) {
+                Section("Forgot password") {
+                    Small("Send a reset request. The WhisperAsh admin will reset your password and send you a temporary one; sign in with it, then change it on this screen.")
+                    OutlinedTextField(email, { email = it }, label = { Text("Email") }, singleLine = true, modifier = Modifier.fillMaxWidth(),
+                        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Email))
+                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
+                        Button(enabled = !busy && email.contains("@"), onClick = {
+                            app.settings.serverUrl = server
+                            val e = email
+                            run { app.sync.requestPasswordReset(e); info = "Request sent. The admin will send you a temporary password." }
+                        }) { Text(if (busy) "Please wait…" else "Send reset request") }
+                        TextButton(onClick = { forgotMode = false; info = "" }) { Text("Back to sign in") }
+                    }
+                }
             } else {
-                Section(if (registerMode) "Create an account" else "Log in with your WhisperAsh account") {
+                Section(if (registerMode) "Create an account" else "Sign in to WhisperAsh") {
+                    Small(if (registerMode) "Free words every day, no API keys needed." else "Use the email and password of your WhisperAsh account.")
                     OutlinedTextField(email, { email = it }, label = { Text("Email") }, singleLine = true, modifier = Modifier.fillMaxWidth(),
                         keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Email))
                     OutlinedTextField(password, { password = it }, label = { Text("Password") }, singleLine = true, modifier = Modifier.fillMaxWidth(),
                         visualTransformation = PasswordVisualTransformation(), keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Password))
-                    if (registerMode) OutlinedTextField(code, { code = it }, label = { Text("Sign-up code") }, singleLine = true, modifier = Modifier.fillMaxWidth())
+                    if (registerMode && showAdvanced) OutlinedTextField(code, { code = it }, label = { Text("Sign-up code (only if you were given one)") }, singleLine = true, modifier = Modifier.fillMaxWidth())
                     Spacer(Modifier.height(6.dp))
                     Row(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
                         Button(enabled = !busy && email.isNotBlank() && password.length >= 8, onClick = {
@@ -404,16 +470,20 @@ class MainActivity : ComponentActivity() {
                             val e = email; val p = password; val c = code
                             run { if (registerMode) app.sync.register(e, p, c) else app.sync.login(e, p) }
                             password = ""
-                        }) { Text(if (busy) "Please wait…" else if (registerMode) "Create account" else "Log in") }
+                        }) { Text(if (busy) "Please wait…" else if (registerMode) "Create account" else "Sign in") }
                         TextButton(onClick = { registerMode = !registerMode }) { Text(if (registerMode) "I have an account" else "New account") }
                     }
+                    if (!registerMode) TextButton(onClick = { forgotMode = true; message = ""; info = "" }) { Text("Forgot password?") }
                     if (state.lastError.isNotEmpty() && message.isEmpty()) Small(state.lastError)
                 }
-                Section("Server") {
-                    OutlinedTextField(server, { server = it }, singleLine = true, modifier = Modifier.fillMaxWidth(), label = { Text("Sync server URL") })
+                TextButton(onClick = { showAdvanced = !showAdvanced }) { Text(if (showAdvanced) "Hide advanced" else "Advanced (own server)") }
+                if (showAdvanced) Section("Server") {
+                    OutlinedTextField(server, { server = it }, singleLine = true, modifier = Modifier.fillMaxWidth(), label = { Text("WhisperAsh server URL") })
+                    Small("Only change this if you run your own WhisperAsh server (it is open source).")
                 }
             }
             if (message.isNotEmpty()) Text(message, color = Color(0xFFFF8080))
+            if (info.isNotEmpty() && message.isEmpty()) Text(info, color = Color(0xFF7FD48A))
         }
     }
 
@@ -424,6 +494,9 @@ class MainActivity : ComponentActivity() {
         "invalid_signup_code" -> "Wrong sign-up code."
         "password_too_short" -> "Password must be at least 8 characters."
         "invalid_email" -> "That email doesn't look right."
+        "too_many_signups" -> "Too many new accounts from this network today. Try again tomorrow."
+        "too_many_requests" -> "Too many requests from this network today. Try again tomorrow."
+        "wrong_current_password" -> "The current password is wrong."
         null -> "Something went wrong."
         else -> code
     }

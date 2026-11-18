@@ -101,6 +101,10 @@ class Settings(context: Context) {
     var geminiBackup: Boolean
         get() = prefs.getBoolean("gemini_backup", true)
         set(v) = prefs.edit().putBoolean("gemini_backup", v).apply()
+    /** ENGINE_ACCOUNT, ENGINE_OWN, or null = decided by whether an own Groq key is saved. Per phone. */
+    var engineSource: String?
+        get() = prefs.getString("engine_source", null)
+        set(v) = prefs.edit().putString("engine_source", v).apply()
     var autoSpace: Boolean
         get() = prefs.getBoolean("auto_space", true)
         set(v) = prefs.edit().putBoolean("auto_space", v).apply()
@@ -123,12 +127,18 @@ class Settings(context: Context) {
     var lastSyncAt: Long
         get() = prefs.getLong("last_sync_at", 0)
         set(v) = prefs.edit().putLong("last_sync_at", v).apply()
+    /** When the sync server last refused notes (it predates them); 0 = notes sync fine. */
+    var notesUnsupportedAt: Long
+        get() = prefs.getLong("notes_unsupported_at", 0)
+        set(v) = prefs.edit().putLong("notes_unsupported_at", v).apply()
     var lastSyncError: String
         get() = prefs.getString("last_sync_error", "") ?: ""
         set(v) = prefs.edit().putString("last_sync_error", v).apply()
 
     companion object {
         const val DEFAULT_SERVER = "https://whisperash-sync.whisperash-ashish.workers.dev"
+        const val ENGINE_ACCOUNT = "account"
+        const val ENGINE_OWN = "own"
         const val DEFAULT_STT_MODEL = "whisper-large-v3"
         const val PRECISE_MODEL = "openai/gpt-oss-120b"
         const val FASTER_MODEL = "qwen/qwen3.8-27b"

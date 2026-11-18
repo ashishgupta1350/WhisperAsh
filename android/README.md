@@ -11,8 +11,9 @@ rules and account as WhisperAsh on your PC.
   dictionary, settings (language, Hindi script, cleanup model, tone per app, keys), account and sync.
 - **Speed:** audio is compressed (AAC, 32 kbit/s) while you talk and the connection to Groq is
   opened as you start, so stopping only has to upload a small file. Short clean phrases skip cleanup.
-- **Keys:** your Groq key (and an optional Gemini backup key) are typed into the app and stored
-  encrypted with the Android Keystore. They are never in the code and never synced.
+- **Keys:** none needed: sign in and the WhisperAsh server's keys are used, within a daily word
+  allowance. With *My own API keys* instead, your Groq key (and an optional Gemini backup key) are
+  typed into the app and stored encrypted with the Android Keystore; never in the code, never synced.
 
 ## Put it on your phone (sideload)
 
@@ -24,9 +25,11 @@ rules and account as WhisperAsh on your PC.
 3. Open **WhisperAsh** and follow the checklist on the first screen:
    1. **Turn on the WhisperAsh keyboard** (opens Android's keyboard list; switch WhisperAsh on and accept the notice).
    2. **Allow the microphone.**
-   3. **Add your Groq API key** (Settings tab). Optional: a Gemini key for backup.
+   3. **Sign in** with your WhisperAsh email and password (Account tab, or "New account"). That's
+      all: dictation runs on the WhisperAsh server with a daily word allowance shown on Home, and
+      your PC's history, dictionary and settings sync. Prefer your own keys? Settings → Speech
+      engine → *My own API keys*, then add a Groq key (and optionally a Gemini key for backup).
    4. **Switch to WhisperAsh** (or tap 🌐 on any keyboard).
-   5. **Log in** with your WhisperAsh account (Account tab) to get your PC's history, dictionary and settings.
 
 Or with a USB cable and USB debugging on, from this folder:
 

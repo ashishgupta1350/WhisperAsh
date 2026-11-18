@@ -17,6 +17,20 @@ import org.json.JSONArray
 import org.json.JSONObject
 import java.io.IOException
 
+/** Words the account may dictate on the owner's keys (from the server's /me). */
+data class AccountPlan(
+    val limit: Int, val used: Int, val left: Int, val period: String, val resetsAt: Long,
+    val status: String, val ownGroqKey: Boolean,
+) {
+    val periodWord get() = if (period == "week") "this week" else "today"
+    /** "1,240 of 2,000 words left today" / "No limit: your own key" / "Paused by the admin". */
+    fun summary(): String = when {
+        status == "blocked" -> "Your account is paused. Contact the WhisperAsh admin."
+        ownGroqKey -> "No word limit: your account uses a key the admin set for you."
+        else -> "%,d of %,d words left %s".format(left, limit, periodWord)
+    }
+}
+
 data class SyncState(
     val signedIn: Boolean,
     val email: String,
@@ -51,7 +65,7 @@ class SyncClient(
 
     private fun snapshot(busy: Boolean) = SyncState(
         signedIn, settings.email, busy, settings.lastSyncAt, settings.lastSyncError,
-        try { db.dirtyCount() + if (settings.settingsDirty) 1 else 0 } catch (_: Exception) { 0 },
+        try { db.dirtyCount() + db.dirtyNoteCount() + if (settings.settingsDirty) 1 else 0 } catch (_: Exception) { 0 },
     )
 
     fun refreshState() { _state.value = snapshot(_state.value.busy) }
@@ -80,6 +94,30 @@ class SyncClient(
     }
 
     class HttpError(val status: Int, message: String) : IOException(message)
+
+    /** The account's word allowance (`plan` from GET /me), or null when signed out or offline. */
+    fun fetchPlan(): AccountPlan? {
+        if (!signedIn) return null
+        val token = secure.get(SecureStore.SYNC_TOKEN) ?: return null
+        val req = Request.Builder().url(settings.serverUrl.trimEnd('/') + "/me").get()
+            .header("Authorization", "Bearer $token").build()
+        return try {
+            http.newCall(req).execute().use { res ->
+                if (!res.isSuccessful) return null
+                val p = JSONObject(res.body.string()).optJSONObject("plan") ?: return null
+                AccountPlan(
+                    p.optInt("limit"), p.optInt("used"), p.optInt("left"), p.optString("period", "day"),
+                    p.optLong("resetsAt"), p.optString("status", "active"),
+                    p.optJSONObject("ownKeys")?.optBoolean("groq") == true,
+                ).also { lastPlan = it }
+            }
+        } catch (_: Exception) {
+            null
+        }
+    }
+
+    @Volatile var lastPlan: AccountPlan? = null
+        private set
 
     private fun device() = "Android ${Build.MANUFACTURER} ${Build.MODEL}".take(100)
 
@@ -111,6 +149,16 @@ class SyncClient(
         syncNow(Reason.LOGIN)
     }
 
+    /** "Forgot password": the admin sees the request and sends a temporary password (no email service). */
+    fun requestPasswordReset(email: String) {
+        request("/auth/forgot", JSONObject().put("email", email.trim()), auth = false)
+    }
+
+    /** Signed in: replace the password. The server signs out the user's other devices. */
+    fun changePassword(current: String, newPassword: String) {
+        request("/auth/change-password", JSONObject().put("current", current).put("password", newPassword))
+    }
+
     suspend fun logout() {
         try { request("/auth/logout", null) } catch (_: Exception) {}
         secure.put(SecureStore.SYNC_TOKEN, null)
@@ -135,6 +183,7 @@ class SyncClient(
         _state.value = snapshot(true)
         try {
             push()
+            pushNotes(force = reason == Reason.MANUAL || reason == Reason.LOGIN)
             pull()
             settings.lastSyncAt = System.currentTimeMillis()
             settings.lastSyncError = ""
@@ -175,6 +224,36 @@ class SyncClient(
         }
     }
 
+    /**
+     * Notes go in their own upload: a sync server that does not know the "notes" kind yet answers 400,
+     * which must never block history / dictionary sync. The notes then wait on the phone and are retried
+     * every 6 hours (or right away from Sync now).
+     */
+    private fun pushNotes(force: Boolean = false) {
+        if (!force && System.currentTimeMillis() - settings.notesUnsupportedAt < 6 * 3_600_000L) return
+        while (true) {
+            val rows = db.dirtyNotes(PUSH_BATCH)
+            if (rows.isEmpty()) return
+            val items = JSONArray()
+            for (r in rows) items.put(
+                JSONObject().put("kind", r.kind).put("id", r.id).put("updated_at", r.updatedAt)
+                    .put("deleted", r.deleted).put("data", r.data)
+            )
+            try {
+                request("/sync/push", JSONObject().put("items", items))
+            } catch (e: HttpError) {
+                if (e.status == 400) {
+                    settings.notesUnsupportedAt = System.currentTimeMillis()
+                    Log.w(TAG, "sync server does not take notes yet; kept on this phone")
+                    return
+                }
+                throw e
+            }
+            settings.notesUnsupportedAt = 0
+            db.markNotesClean(rows)
+        }
+    }
+
     private fun pull() {
         var cursor: JSONObject? = settings.cursorJson?.let { try { JSONObject(it) } catch (_: Exception) { null } }
         var changed = false
@@ -192,6 +271,8 @@ class SyncClient(
                 if (kind == "settings") {
                     gotSettings = true
                     if (applySettings(ts, deleted, data)) changed = true
+                } else if (kind == "notes") {
+                    if (db.applyRemoteNote(id, ts, deleted, data)) changed = true
                 } else if (db.applyRemote(kind, id, ts, deleted, data)) changed = true
             }
             cursor = page.optJSONObject("cursor")
