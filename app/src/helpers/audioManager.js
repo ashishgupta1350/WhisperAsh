@@ -194,7 +194,8 @@ import {
 import { normalizeAgentSelectionContext } from "../utils/agentSelectionContext";
 import { getAgentName } from "../utils/agentName";
 import { shouldDisplayDictationPreview } from "../utils/transcriptionPreview";
-import { getAccountToken, whisperAshAccountActive } from "../utils/whisperashEngine";
+import { getAccountToken, getGroqBase, whisperAshAccountActive } from "../utils/whisperashEngine";
+import { isSilenceHallucination } from "../utils/whisperashSilence";
 import {
   buildSelectionEditSystemPrompt,
   buildSelectionEditUserPrompt,
@@ -1622,7 +1623,8 @@ registerProcessor("pcm-streaming-processor", PCMStreamingProcessor);
       const now = Date.now();
       if (this._waLastPrewarm && now - this._waLastPrewarm < 20000) return;
       this._waLastPrewarm = now;
-      fetch("https://api.groq.com/openai/v1/models", { method: "HEAD", cache: "no-store" }).catch(() => {});
+      // getGroqBase(): the WhisperAsh server in account mode, api.groq.com otherwise.
+      fetch(`${getGroqBase()}/models`, { method: "HEAD", cache: "no-store" }).catch(() => {});
     } catch {
       /* never block recording */
     }
@@ -2362,12 +2364,17 @@ registerProcessor("pcm-streaming-processor", PCMStreamingProcessor);
     let noAudioDetected = false;
     const speechGateDecision = getLocalSpeechGateDecision(this._localSpeechGateState);
     this._localSpeechGateState = null;
+    // WhisperAsh: kept for the stock-phrase check after transcription ("Thank you." in silence).
+    this._lastSpeechGate = speechGateDecision;
 
     const shouldUseStrongLocalWhisperGate =
       settings.useLocalWhisper && settings.localTranscriptionProvider === "whisper";
+    // WhisperAsh: Groq Whisper also invents text for a recording with no speech-like window at all
+    // (a hotkey tapped on and off), so it gets the same strong gate as local whisper.cpp.
+    const whisperAshGroq = !settings.useLocalWhisper && settings.cloudTranscriptionProvider === "groq";
     if (
       speechGateDecision.skip &&
-      (speechGateDecision.reason === "silence" || shouldUseStrongLocalWhisperGate)
+      (speechGateDecision.reason === "silence" || shouldUseStrongLocalWhisperGate || whisperAshGroq)
     ) {
       logger.info(
         "Speech gate skipped transcription",
@@ -3605,6 +3612,17 @@ registerProcessor("pcm-streaming-processor", PCMStreamingProcessor);
       return normalizedText;
     }
     if (wasCancelled()) return normalizedText;
+    // WhisperAsh: hotkey tapped on and off with nothing said -> Whisper's "Thank you." is dropped.
+    const silenceGate = this._lastSpeechGate;
+    this._lastSpeechGate = null;
+    if (isSilenceHallucination(normalizedText, silenceGate)) {
+      logger.info(
+        "Dropped a stock phrase heard in near-silence",
+        { text: normalizedText, speechWindowCount: silenceGate?.speechWindowCount, windowCount: silenceGate?.windowCount },
+        "audio"
+      );
+      return "";
+    }
 
     logger.logReasoning("TRANSCRIPTION_RECEIVED", {
       source,

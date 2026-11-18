@@ -632,13 +632,25 @@ function applyWhisperAshDefaults() {
     telemetryEnabled: "false",
     preferredLanguage: "auto",
     hindiScriptPreference: "roman",
-    micWarmHoldSeconds: "60",
+    micWarmHoldSeconds: "900",
   };
   for (const [key, value] of Object.entries(defaults)) localStorage.setItem(key, value);
   localStorage.setItem("whisperashDefaultsV1", "true");
+  localStorage.setItem("whisperashMicHold15mV1", "true");
+}
+
+// WhisperAsh: after a minute idle the first press paid ~0.9 s for Windows to open the mic cold, so
+// the mic now stays ready for 15 minutes after a dictation (Settings > Microphone > Keep
+// Microphone Warm; the mic-in-use icon shows meanwhile, nothing is recorded). Installs still on the
+// old 1-minute default move once; any other choice the user made is kept.
+function applyWhisperAshMicHold15m() {
+  if (!isBrowser || localStorage.getItem("whisperashMicHold15mV1") === "true") return;
+  if (localStorage.getItem("micWarmHoldSeconds") === "60") localStorage.setItem("micWarmHoldSeconds", "900");
+  localStorage.setItem("whisperashMicHold15mV1", "true");
 }
 
 applyWhisperAshDefaults();
+applyWhisperAshMicHold15m();
 // WhisperAsh never shows OpenWhispr's paid-plan banner.
 if (isBrowser) localStorage.setItem("upgradeProDismissed", "true");
 
