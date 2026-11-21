@@ -1090,3 +1090,28 @@ test("a mic detection queued before its note opened doesn't prompt either", asyn
   assert.equal(shown.length, 0);
   engine.stop();
 });
+
+// WhisperAsh has no OpenWhispr cloud API, so Start on a meeting prompt and a calendar join go to
+// the WhisperAsh "Record meeting" recorder instead of an OpenWhispr note recording, which failed
+// with "OpenWhispr API URL not configured".
+test("WhisperAsh: prompt Start and calendar join go to Record meeting, not an OpenWhispr note", async () => {
+  const { engine, windowManager, meetingNavigations } = createEngine();
+  const requests = [];
+  let dismissed = 0;
+  windowManager.whisperashMeetingRequest = (mode, options) => requests.push({ mode, options });
+  windowManager.dismissMeetingNotification = () => dismissed++;
+  engine.activeDetections.set("audio:1", { source: "audio" });
+
+  const owner = { prompt: { detectionId: "audio:1" }, detection: { source: "audio", event: null } };
+  const result = await engine._startNotification(owner, "start", {});
+  assert.deepEqual(result, { success: true, value: null });
+  assert.equal(engine.activeDetections.has("audio:1"), false);
+  assert.equal(dismissed, 1);
+
+  await engine.joinCalendarMeeting("event-1", "calendar-join", { activate: false });
+  assert.deepEqual(requests, [
+    { mode: "start", options: { activate: true } },
+    { mode: "start", options: { activate: false } },
+  ]);
+  assert.equal(meetingNavigations.length, 0, "no OpenWhispr meeting note is opened");
+});

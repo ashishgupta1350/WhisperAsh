@@ -15,8 +15,9 @@ const HOTKEY_REGISTRATION_DELAY_MS = 1000;
 const FALLBACK_HOTKEYS = ["F8", "F9", "Control+Shift+Space"];
 
 // Default hotkey for dictation if no saved value exists
-// WhisperAsh: Right Ctrl alone on Windows; upstream default elsewhere.
-const DEFAULT_HOTKEY = process.platform === "win32" ? "RightControl" : "Control+Super";
+// WhisperAsh: Right Alt alone on Windows (the owner's choice; AltGr layouts are handled by the
+// key listener and the capture field); upstream default elsewhere.
+const DEFAULT_HOTKEY = process.platform === "win32" ? "RightAlt" : "Control+Super";
 
 // Dictation has a dedicated native path because it also supports push-to-talk.
 const LINUX_NATIVE_TAP_SLOTS = new Set(["meeting", "voiceAgent", "translation"]);
@@ -961,6 +962,7 @@ class HotkeyManager extends EventEmitter {
         return {
           success: false,
           error: i18nMain.t("hotkey.errors.slotConflict", {
+            hotkey,
             slot: SLOT_LABEL_KEYS[otherSlotName]
               ? i18nMain.t(SLOT_LABEL_KEYS[otherSlotName])
               : otherSlotName,
@@ -1478,8 +1480,8 @@ class HotkeyManager extends EventEmitter {
   getEffectiveDefaultHotkey() {
     if (process.platform === "darwin") return "GLOBE";
     if (this._isWindowsKeyListenerMissing()) return FALLBACK_HOTKEYS[0];
-    // WhisperAsh: Right Ctrl alone on Windows (no Start menu or menu-bar side effects).
-    if (process.platform === "win32") return "RightControl";
+    // WhisperAsh: Right Alt alone on Windows (see DEFAULT_HOTKEY).
+    if (process.platform === "win32") return "RightAlt";
     if (process.platform !== "linux") return DEFAULT_HOTKEY;
 
     const isX11 = !GnomeShortcutManager.isWayland();

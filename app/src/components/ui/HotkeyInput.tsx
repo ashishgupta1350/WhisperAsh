@@ -12,6 +12,7 @@ import {
   hasMetModifierOnlyHoldThreshold,
   shouldAcceptModifierOnlyCapture,
   shouldRestoreCaptureFocus,
+  withoutAltGraphCtrl,
 } from "./hotkeyCapturePolicy";
 
 const CODE_TO_KEY: Record<string, string> = {
@@ -278,6 +279,7 @@ export function HotkeyInput({
     shift: false,
   });
   const modifierCodesRef = useRef<Partial<Record<ModifierKind, string>>>({});
+  const altGraphRef = useRef(false);
   const platform = getPlatform();
   const isMac = platform === "darwin";
 
@@ -334,6 +336,7 @@ export function HotkeyInput({
       warningTimeoutRef.current = setTimeout(() => setValidationWarning(null), 4000);
       heldModifiersRef.current = { ctrl: false, meta: false, alt: false, shift: false };
       modifierCodesRef.current = {};
+      altGraphRef.current = false;
       setActiveModifiers([]);
       keyDownTimeRef.current = 0;
       clearFnHeld();
@@ -397,20 +400,37 @@ export function HotkeyInput({
         modifierCodesRef.current.shift = code;
       }
 
+      // AltGr layouts: Right Alt comes with a synthetic Left Ctrl, which is not a Ctrl press.
+      if (
+        !isMac &&
+        code === "AltRight" &&
+        (e.nativeEvent.key === "AltGraph" || e.nativeEvent.getModifierState?.("AltGraph"))
+      ) {
+        altGraphRef.current = true;
+      }
+      const stripped = withoutAltGraphCtrl(
+        heldModifiersRef.current,
+        modifierCodesRef.current,
+        altGraphRef.current
+      );
+      heldModifiersRef.current = stripped.held;
+      modifierCodesRef.current = stripped.codes;
+
       // Track when first pressed (for hold detection)
       if (keyDownTimeRef.current === 0) {
         keyDownTimeRef.current = Date.now();
       }
 
       const codes = modifierCodesRef.current;
+      const ctrlHeld = heldModifiersRef.current.ctrl;
       const held: string[] = [];
       const holdKind = (kind: ModifierKind) =>
         held.push(heldModifierToken(kind, codes[kind], platform));
       if (isMac) {
         if (e.metaKey) holdKind("meta");
-        if (e.ctrlKey) holdKind("ctrl");
+        if (ctrlHeld) holdKind("ctrl");
       } else {
-        if (e.ctrlKey) holdKind("ctrl");
+        if (ctrlHeld) holdKind("ctrl");
         if (e.metaKey) holdKind("meta");
       }
       if (e.altKey) holdKind("alt");
@@ -485,6 +505,7 @@ export function HotkeyInput({
       if (!attempted) {
         heldModifiersRef.current = { ctrl: false, meta: false, alt: false, shift: false };
         modifierCodesRef.current = {};
+        altGraphRef.current = false;
         setActiveModifiers(fnHeldRef.current ? ["Fn"] : []);
         keyDownTimeRef.current = 0;
       }

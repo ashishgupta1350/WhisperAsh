@@ -973,6 +973,13 @@ class WindowManager {
   // hotkey is being captured, like every hotkey slot.
   async startManualMeeting(options) {
     if (this.hotkeyManager.isInListeningMode() || !this.isMeetingInputAllowed()) return;
+    // WhisperAsh: every manual start (hotkey, native key listener, tray, pill menu) goes to the
+    // WhisperAsh "Record meeting" recorder. The OpenWhispr live pipeline needs the OpenWhispr
+    // cloud API, which WhisperAsh doesn't have ("OpenWhispr API URL not configured").
+    if (this.whisperashMeetingRequest) {
+      this.whisperashMeetingRequest(options?.toggle ? "toggle" : "start", options);
+      return;
+    }
     try {
       await this.meetingDetectionEngine?.startManualMeeting(options);
     } catch (error) {

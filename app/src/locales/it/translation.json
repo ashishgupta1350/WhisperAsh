@@ -131,7 +131,7 @@
       "windowsKeyListenerMissing": "\"{{hotkey}}\" richiede il listener di tasti di Windows, che manca in questa installazione. Scegli una scorciatoia con un tasto normale.",
       "updateFailedCheckFormat": "Impossibile aggiornare la scorciatoia a \"{{hotkey}}\". Verifica che il formato sia valido.",
       "trySuggestions": "Prova: {{suggestions}}",
-      "slotConflict": "Questa scorciatoia è già utilizzata per {{slot}}."
+      "slotConflict": "{{hotkey}} è già il tuo {{slot}}. Scegli un altro tasto qui oppure cambia prima il {{slot}}."
     }
   },
   "systemSettings": {
@@ -4449,6 +4449,7 @@
   },
   "sidebar": {
     "insights": "Statistiche",
+    "meetings": "Riunioni",
     "home": "Home",
     "notes": "Note",
     "upload": "Carica",

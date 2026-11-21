@@ -514,6 +514,13 @@ class MeetingDetectionEngine {
 
   async _startNotification(owner, action, options) {
     if (action === "join") this.openNotificationJoinUrl(owner);
+    // WhisperAsh: Start on a meeting prompt records with "Record meeting", not an OpenWhispr note.
+    if (this.windowManager.whisperashMeetingRequest) {
+      this.windowManager.whisperashMeetingRequest("start", { activate: action !== "join" });
+      this.activeDetections.delete(owner.prompt.detectionId);
+      this.windowManager.dismissMeetingNotification({ notifyEngine: false });
+      return { success: true, value: null };
+    }
     const db = this.databaseManager;
     const context = () =>
       meetingDestinationContext(db, owner, this.windowManager.meetingRecentDestinations);
@@ -662,6 +669,11 @@ class MeetingDetectionEngine {
 
   // Resolves with the org's refusal, if any, for the caller to explain.
   async joinCalendarMeeting(eventId, trigger = "calendar-join", options) {
+    // WhisperAsh: see _startNotification.
+    if (this.windowManager.whisperashMeetingRequest) {
+      this.windowManager.whisperashMeetingRequest("start", options);
+      return;
+    }
     const refusal = await this._meetingStartRefusal();
     if (refusal) return refusal;
     this._meetingModeActive = true;

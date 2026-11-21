@@ -8,6 +8,10 @@ interface PillCommandMenuProps {
   isRecording: boolean;
   agentAllowed: boolean;
   meetingAllowed: boolean;
+  /** WhisperAsh: "Recording meeting · 12:05" while Record meeting runs, else null. */
+  meetingStatus?: string | null;
+  onStopMeeting?: () => void;
+  onOpenMeetings?: () => void;
   isHovered: boolean;
   setWindowInteractivity: (capture: boolean) => void;
   onToggleListening: () => void;
@@ -27,6 +31,9 @@ export function PillCommandMenu({
   isRecording,
   agentAllowed,
   meetingAllowed,
+  meetingStatus = null,
+  onStopMeeting,
+  onOpenMeetings,
   isHovered,
   setWindowInteractivity,
   onToggleListening,
@@ -73,6 +80,27 @@ export function PillCommandMenu({
         }
       }}
     >
+      {meetingStatus && (
+        <>
+          <div className="flex items-center gap-2 px-3 pt-2 pb-1 text-xs text-muted-foreground tabular-nums">
+            <span className="h-2 w-2 shrink-0 rounded-full bg-red-500" aria-hidden="true" />
+            {meetingStatus}
+          </div>
+          <button
+            className="w-full px-3 py-2 text-start text-sm font-medium text-red-600 hover:bg-muted focus:bg-muted focus:outline-none dark:text-red-400"
+            onClick={onStopMeeting}
+          >
+            Stop meeting
+          </button>
+          <button
+            className="w-full px-3 py-2 text-start text-sm hover:bg-muted focus:bg-muted focus:outline-none"
+            onClick={onOpenMeetings}
+          >
+            Open Meetings
+          </button>
+          <div className="h-px bg-border" />
+        </>
+      )}
       <button
         className="w-full px-3 py-2 text-start text-sm font-medium hover:bg-muted focus:bg-muted focus:outline-none"
         onClick={onToggleListening}
@@ -83,7 +111,7 @@ export function PillCommandMenu({
           surface (a translation recording becomes invisible AND un-stoppable:
           its hotkey is blocked while the panel is open and Escape belongs to the
           panel). Stop or finish the recording first. */}
-      {agentAllowed && !isRecording && (
+      {agentAllowed && !isRecording && !meetingStatus && (
         <>
           <div className="h-px bg-border" />
           <button
@@ -94,7 +122,7 @@ export function PillCommandMenu({
           </button>
         </>
       )}
-      {meetingAllowed && !isRecording && (
+      {meetingAllowed && !isRecording && !meetingStatus && (
         <>
           <div className="h-px bg-border" />
           <button

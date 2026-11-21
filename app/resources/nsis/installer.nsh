@@ -37,6 +37,10 @@
     !insertmacro DeleteAutoStartEntry "com.gizmolabs.openwhispr"
     !insertmacro DeleteAutoStartEntry "com.gizmolabs.openwhispr.staging"
     !insertmacro DeleteAutoStartEntry "com.gizmolabs.openwhispr.development"
+    ; WhisperAsh builds (BASE_WINDOWS_APP_ID "com.whisperash.app" in main.js)
+    !insertmacro DeleteAutoStartEntry "com.whisperash.app"
+    !insertmacro DeleteAutoStartEntry "com.whisperash.app.staging"
+    !insertmacro DeleteAutoStartEntry "com.whisperash.app.development"
     nsExec::ExecToLog 'netsh advfirewall firewall delete rule name="${SHERPA_FIREWALL_RULE}"'
     StrCpy $0 "$PROFILE\.cache\openwhispr\models"
     IfFileExists "$0\*.*" 0 +3

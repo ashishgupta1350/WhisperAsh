@@ -131,7 +131,7 @@
       "windowsKeyListenerMissing": "\"{{hotkey}}\" 需要 Windows 按键监听器，但此安装中缺少该组件。请选择包含普通按键的快捷键。",
       "updateFailedCheckFormat": "无法将快捷键更新为 \"{{hotkey}}\"，请检查格式是否有效。",
       "trySuggestions": "建议尝试：{{suggestions}}",
-      "slotConflict": "此快捷键已用于{{slot}}。"
+      "slotConflict": "{{hotkey}} 已用作{{slot}}。请在此选择其他按键，或先更改{{slot}}。"
     }
   },
   "systemSettings": {
@@ -4428,6 +4428,7 @@
   },
   "sidebar": {
     "insights": "统计",
+    "meetings": "会议",
     "home": "首页",
     "notes": "笔记",
     "upload": "上传",

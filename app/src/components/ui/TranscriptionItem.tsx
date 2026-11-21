@@ -18,6 +18,8 @@ import {
   AlertCircle,
   ArchiveRestore,
   MoreVertical,
+  Sparkles,
+  Undo2,
 } from "../icons";
 import type {
   TranscriptionItem as TranscriptionItemType,
@@ -50,6 +52,10 @@ interface TranscriptionItemProps {
   onShowAudioInFolder?: (id: number) => void;
   onRetryTranscription?: (id: number, options?: { isRecover?: boolean }) => Promise<void>;
   onOpenSettings?: (section?: string) => void;
+  /** WhisperAsh "Re-transcribe (better model)": Gemini 3.6 Flash + GPT-OSS 120B cleanup. */
+  onRetranscribeBetter?: (id: number) => Promise<void>;
+  onUndoRetranscribe?: (id: number) => Promise<void>;
+  canUndoRetranscribe?: boolean;
 }
 
 export default function TranscriptionItem({
@@ -59,10 +65,24 @@ export default function TranscriptionItem({
   onShowAudioInFolder,
   onRetryTranscription,
   onOpenSettings,
+  onRetranscribeBetter,
+  onUndoRetranscribe,
+  canUndoRetranscribe = false,
 }: TranscriptionItemProps) {
   const { t, i18n } = useTranslation();
   const [isExpanded, setIsExpanded] = useState(false);
   const [isRetrying, setIsRetrying] = useState(false);
+  const [isRetranscribing, setIsRetranscribing] = useState(false);
+
+  const handleRetranscribe = async () => {
+    if (isRetranscribing || isRetrying || !onRetranscribeBetter) return;
+    setIsRetranscribing(true);
+    try {
+      await onRetranscribeBetter(item.id);
+    } finally {
+      setIsRetranscribing(false);
+    }
+  };
 
   const timestampSource = item.timestamp.endsWith("Z") ? item.timestamp : `${item.timestamp}Z`;
   const timestampDate = new Date(timestampSource);
@@ -131,6 +151,23 @@ export default function TranscriptionItem({
       },
     !isDiscarded &&
       hasAudio && { key: "retry", icon: RotateCcw, label: retryLabel, onSelect: handleRetry },
+    // Hidden when the recording is gone (audio retention, or never saved).
+    isTranscribed &&
+      hasAudio &&
+      onRetranscribeBetter && {
+        key: "retranscribe",
+        icon: Sparkles,
+        label: "Re-transcribe (better model)",
+        onSelect: () => void handleRetranscribe(),
+      },
+    isTranscribed &&
+      canUndoRetranscribe &&
+      onUndoRetranscribe && {
+        key: "undo-retranscribe",
+        icon: Undo2,
+        label: "Undo re-transcribe",
+        onSelect: () => void onUndoRetranscribe(item.id),
+      },
     isTranscribed &&
       rawText !== null && {
         key: "raw",
@@ -196,11 +233,11 @@ export default function TranscriptionItem({
               <Button
                 size="icon"
                 variant="ghost"
-                disabled={isRetrying}
+                disabled={isRetrying || isRetranscribing}
                 aria-label={t("controlPanel.history.moreActions")}
                 className={ACTION_BUTTON_CLASS}
               >
-                {isRetrying ? (
+                {isRetrying || isRetranscribing ? (
                   <Loader2 size={13} className="animate-spin" />
                 ) : (
                   <MoreVertical size={13} />
@@ -226,6 +263,12 @@ export default function TranscriptionItem({
         </div>
       </div>
 
+      {isRetranscribing && (
+        <div className="mt-1 flex items-center gap-1.5 text-xs text-muted-foreground">
+          <Loader2 size={12} className="animate-spin" />
+          Re-transcribing with Gemini 3.6 Flash, then cleaning up…
+        </div>
+      )}
       <div className="mt-1.5">
         {isFailed ? (
           <div className="flex items-start gap-2">

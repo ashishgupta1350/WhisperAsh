@@ -459,6 +459,26 @@ function wasLaunchedAtLoginHidden() {
   }
 }
 
+// WhisperAsh: start with Windows by default. Runs once per install (flag in
+// userData/whisperash-flags.json), so a user who turns it off keeps it off.
+function defaultAutoStartOnce() {
+  const fs = require("fs");
+  const flagsPath = path.join(app.getPath("userData"), "whisperash-flags.json");
+  try {
+    let flags = {};
+    try {
+      flags = JSON.parse(fs.readFileSync(flagsPath, "utf8")) || {};
+    } catch {}
+    if (flags.autoStartDefaulted || !app.isPackaged) return;
+    autoStart.setAutoStartEnabled(true);
+    flags.autoStartDefaulted = true;
+    fs.writeFileSync(flagsPath, JSON.stringify(flags, null, 2), "utf8");
+    debugLogger.info("Turned on start with Windows (first run)");
+  } catch (error) {
+    debugLogger.warn("Failed to turn on start with Windows", { error: error?.message });
+  }
+}
+
 function initializeCoreManagers() {
   setupProductionPath();
 
@@ -692,6 +712,7 @@ function initializeCoreManagers() {
   windowsLoopbackAudioManager.getCapability().catch(() => {});
   cleanupOrphanedLinuxRestoreToken();
   syncAutoStartEntry();
+  defaultAutoStartOnce();
   meetingAecManager = new MeetingAecManager();
   windowManager.textEditMonitor = textEditMonitor;
   windowManager.selectionManager = selectionManager;
@@ -736,6 +757,7 @@ function initializeCoreManagers() {
     oauthProtocol: OAUTH_PROTOCOL,
   });
 
+  windowManager.whisperashMeetingRequest = requestWhisperAshMeeting;
   setupWhisperAshSync();
 }
 
@@ -823,10 +845,112 @@ function setupWhisperAshSync() {
       },
       (details) => whisperashSync.noteGroqHeaders(details)
     );
+    setupWhisperAshMeetings();
     whisperashSync.init();
   } catch (err) {
     debugLogger.error("WhisperAsh sync failed to start", { error: err.message });
   }
+}
+
+// WhisperAsh: "Record meeting" (microphone only). Processing runs here, so it keeps going
+// when the control panel window is closed.
+let whisperashMeetings = null;
+const whisperashMeetingHotkey = new (require("./src/helpers/whisperashMeetings").PendingHotkeyPress)();
+ipcMain.handle("whisperash-meeting-take-hotkey", () => whisperashMeetingHotkey.take());
+// The pill's meeting menu (Stop meeting / Open Meetings).
+ipcMain.handle("whisperash-meeting-request", (_e, p) => {
+  const mode = p?.mode === "stop" ? "stop" : "open";
+  requestWhisperAshMeeting(mode, { activate: mode === "open" });
+  return { ok: true };
+});
+// Recorder state from the control panel, relayed to the pill (dictation window). While a meeting
+// records, an auto-hidden pill shows so the "Recording meeting" state is visible.
+let whisperashRecorderState = { phase: "idle", id: null, accumulatedMs: 0, runStartedAt: 0 };
+ipcMain.on("whisperash-meeting-recorder-state", (_e, state) => {
+  const was = whisperashRecorderState.phase;
+  whisperashRecorderState = { ...whisperashRecorderState, ...(state || {}) };
+  require("./src/helpers/windowBroadcast").broadcastToWindows(
+    "whisperash-meeting-recorder-state",
+    whisperashRecorderState
+  );
+  const active = (ph) => ph === "recording" || ph === "paused" || ph === "starting";
+  if (!windowManager?._floatingIconAutoHide) return;
+  if (active(whisperashRecorderState.phase) && !active(was)) windowManager.showDictationPanel();
+  else if (!active(whisperashRecorderState.phase) && active(was) && !windowManager.isDictating())
+    windowManager.hideDictationPanel();
+});
+ipcMain.handle("whisperash-get-meeting-recorder-state", () => whisperashRecorderState);
+// windowManager.startManualMeeting and meeting prompts call this instead of the OpenWhispr live
+// pipeline. mode "toggle" (the meeting hotkey) starts or stops; "start" (tray, pill menu, a
+// meeting prompt) starts when idle, otherwise just shows the Meetings page.
+function requestWhisperAshMeeting(mode, options = {}) {
+  whisperashMeetingHotkey.press(mode);
+  windowManager
+    .createControlPanelWindow({ activate: options.activate ?? false })
+    .then(() => windowManager.sendToControlPanel("whisperash-meeting-hotkey"))
+    .catch((error) =>
+      debugLogger.warn("Record meeting: control panel unavailable", { error: error.message }, "meeting")
+    );
+}
+function setupWhisperAshMeetings() {
+  const guard = (fn) => async (_event, payload) => {
+    try {
+      return { ok: true, result: await fn(payload || {}) };
+    } catch (err) {
+      return { ok: false, error: err.message };
+    }
+  };
+  const { WhisperAshMeetings } = require("./src/helpers/whisperashMeetings");
+  const { broadcastToWindows } = require("./src/helpers/windowBroadcast");
+  whisperashMeetings = new WhisperAshMeetings({
+    dir: path.join(app.getPath("userData"), "whisperash-meetings"),
+    environmentManager,
+    getAccount: () => whisperashSync.meetingAccount(),
+    fetch: (url, init) => net.fetch(url, init),
+    broadcast: (channel, payload) => broadcastToWindows(channel, payload),
+    onChange: () => whisperashSync.requestSync("change"),
+    onStopped: (id) =>
+      windowManager
+        .createControlPanelWindow({ activate: true })
+        .then(() => windowManager.sendToControlPanel("whisperash-meeting-open", { id }))
+        .catch((error) =>
+          debugLogger.warn("Record meeting: couldn't open the dashboard", { error: error.message }, "meeting")
+        ),
+    logger: debugLogger,
+  });
+  whisperashSync.meetingsSource = whisperashMeetings;
+  const m = whisperashMeetings;
+  // Chunks are small (5 s of 32 kbit/s audio) and arrive in order, so append is a plain handler.
+  ipcMain.handle("whisperash-meeting-append", (_e, p) => {
+    try {
+      return m.append(p || {});
+    } catch (err) {
+      return { ok: false, error: err.message };
+    }
+  });
+  ipcMain.handle("whisperash-meeting-start", guard(() => m.start()));
+  ipcMain.handle("whisperash-meeting-stop", guard((p) => m.stop(p)));
+  ipcMain.handle("whisperash-meeting-cancel", guard((p) => m.cancel(p)));
+  ipcMain.handle("whisperash-meeting-list", guard(() => m.list()));
+  ipcMain.handle("whisperash-meeting-get", guard((p) => m.get(p)));
+  ipcMain.handle("whisperash-meeting-delete", guard((p) => m.delete(p)));
+  ipcMain.handle("whisperash-meeting-retry", guard((p) => m.retry(p)));
+  ipcMain.handle("whisperash-meeting-rename", guard((p) => m.rename(p)));
+  ipcMain.handle("whisperash-meeting-retranscribe", guard((p) => m.retranscribe(p)));
+  ipcMain.handle("whisperash-meeting-undo-retranscribe", guard((p) => m.undoRetranscribe(p)));
+  // "Re-transcribe (better model)" for a dictation: Gemini 3.6 Flash on the saved audio; the
+  // renderer cleans the result up (Groq gpt-oss-120b) and saves it. Never the OpenWhispr cloud.
+  const { retranscribeDictation } = require("./src/helpers/whisperashMeetings");
+  ipcMain.handle(
+    "whisperash-retranscribe-dictation",
+    guard(async ({ id }) => {
+      if (!databaseManager.getTranscriptionById(id)) throw new Error("This dictation is no longer in history.");
+      const audio = ipcHandlers?.audioStorageManager?.getAudioBuffer(id);
+      if (!audio) throw new Error("The audio for this dictation is no longer saved.");
+      const ctx = m._ctx();
+      return { rawText: await retranscribeDictation({ ...ctx, mimeType: "audio/webm" }, audio), model: "gemini-3.6-flash" };
+    })
+  );
 }
 
 function registerSidecars() {
@@ -1519,8 +1643,9 @@ async function startApp() {
   const meetingHotkeyCallback = () => {
     if (!isMeetingPress()) return;
     debugLogger.info("Meeting hotkey triggered", {}, "meeting");
-    // Usually pressed mid-call: an open panel updates behind the meeting app.
-    windowManager.startManualMeeting({ activate: false });
+    // WhisperAsh: starts / stops "Record meeting" (see requestWhisperAshMeeting). Usually
+    // pressed mid-call, so the panel opens behind the meeting app.
+    windowManager.startManualMeeting({ activate: false, toggle: true });
   };
 
   const savedMeetingKey = environmentManager.getMeetingKey?.() || "";
@@ -2069,7 +2194,7 @@ async function startApp() {
       } else if (hotkeyManager.slotHasHotkey("translation", key)) {
         windowManager.sendToggleTranslation();
       } else if (hotkeyManager.slotHasHotkey("meeting", key)) {
-        windowManager.startManualMeeting({ activate: false });
+        windowManager.startManualMeeting({ activate: false, toggle: true });
       }
     };
 

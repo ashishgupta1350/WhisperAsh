@@ -131,7 +131,7 @@
       "windowsKeyListenerMissing": "\"{{hotkey}}\" nécessite l'écouteur de touches Windows, absent de cette installation. Choisissez un raccourci avec une touche classique.",
       "updateFailedCheckFormat": "Impossible de mettre à jour le raccourci vers \"{{hotkey}}\". Vérifiez que le format est valide.",
       "trySuggestions": "Essayez : {{suggestions}}",
-      "slotConflict": "Ce raccourci est déjà utilisé pour {{slot}}."
+      "slotConflict": "{{hotkey}} est déjà votre {{slot}}. Choisissez une autre touche ici, ou modifiez d'abord le {{slot}}."
     }
   },
   "systemSettings": {
@@ -3607,6 +3607,7 @@
   },
   "sidebar": {
     "insights": "Statistiques",
+    "meetings": "Réunions",
     "home": "Accueil",
     "notes": "Notes",
     "upload": "Importer",

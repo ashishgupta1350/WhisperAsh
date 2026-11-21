@@ -37,6 +37,10 @@ interface HistoryViewProps {
   onOpenIntegrations: () => void;
   onShowAudioInFolder: (id: number) => void;
   onRetryTranscription: (id: number, options?: { isRecover?: boolean }) => Promise<void>;
+  /** WhisperAsh "Re-transcribe (better model)". */
+  onRetranscribeBetter?: (id: number) => Promise<void>;
+  onUndoRetranscribe?: (id: number) => Promise<void>;
+  canUndoRetranscribe?: (id: number) => boolean;
   showDiscarded: boolean;
   onToggleDiscarded: () => void;
   userName?: string | null;
@@ -56,6 +60,9 @@ export default function HistoryView({
   onOpenIntegrations,
   onShowAudioInFolder,
   onRetryTranscription,
+  onRetranscribeBetter,
+  onUndoRetranscribe,
+  canUndoRetranscribe,
   showDiscarded,
   onToggleDiscarded,
   userName,
@@ -238,6 +245,9 @@ export default function HistoryView({
                         onDelete={deleteTranscription}
                         onShowAudioInFolder={onShowAudioInFolder}
                         onRetryTranscription={onRetryTranscription}
+                        onRetranscribeBetter={onRetranscribeBetter}
+                        onUndoRetranscribe={onUndoRetranscribe}
+                        canUndoRetranscribe={canUndoRetranscribe?.(item.id) ?? false}
                         onOpenSettings={(section) => onOpenSettings(section ?? "transcription")}
                       />
                     ))}

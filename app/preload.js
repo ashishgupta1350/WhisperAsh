@@ -1678,4 +1678,42 @@ contextBridge.exposeInMainWorld("whisperash", {
     ipcRenderer.on("whisperash-history-changed", listener);
     return () => ipcRenderer.removeListener("whisperash-history-changed", listener);
   },
+  // Meeting recorder (microphone only); processing runs in the main process.
+  meetingStart: () => ipcRenderer.invoke("whisperash-meeting-start"),
+  meetingAppend: (payload) => ipcRenderer.invoke("whisperash-meeting-append", payload),
+  meetingStop: (payload) => ipcRenderer.invoke("whisperash-meeting-stop", payload),
+  meetingCancel: (id) => ipcRenderer.invoke("whisperash-meeting-cancel", { id }),
+  meetingList: () => ipcRenderer.invoke("whisperash-meeting-list"),
+  meetingGet: (id) => ipcRenderer.invoke("whisperash-meeting-get", { id }),
+  meetingDelete: (id) => ipcRenderer.invoke("whisperash-meeting-delete", { id }),
+  meetingRetry: (id) => ipcRenderer.invoke("whisperash-meeting-retry", { id }),
+  meetingRename: (id, title) => ipcRenderer.invoke("whisperash-meeting-rename", { id, title }),
+  meetingRetranscribe: (id) => ipcRenderer.invoke("whisperash-meeting-retranscribe", { id }),
+  meetingUndoRetranscribe: (id) => ipcRenderer.invoke("whisperash-meeting-undo-retranscribe", { id }),
+  retranscribeDictation: (id) => ipcRenderer.invoke("whisperash-retranscribe-dictation", { id }),
+  meetingTakeHotkey: () => ipcRenderer.invoke("whisperash-meeting-take-hotkey"),
+  // The pill: recorder state (from the control panel) and its Stop / Open actions.
+  meetingRequest: (mode) => ipcRenderer.invoke("whisperash-meeting-request", { mode }),
+  publishMeetingRecorderState: (state) => ipcRenderer.send("whisperash-meeting-recorder-state", state),
+  getMeetingRecorderState: () => ipcRenderer.invoke("whisperash-get-meeting-recorder-state"),
+  onMeetingRecorderState: (callback) => {
+    const listener = (_event, state) => callback(state);
+    ipcRenderer.on("whisperash-meeting-recorder-state", listener);
+    return () => ipcRenderer.removeListener("whisperash-meeting-recorder-state", listener);
+  },
+  onMeetingOpen: (callback) => {
+    const listener = (_event, payload) => callback(payload);
+    ipcRenderer.on("whisperash-meeting-open", listener);
+    return () => ipcRenderer.removeListener("whisperash-meeting-open", listener);
+  },
+  onMeetingHotkey: (callback) => {
+    const listener = () => callback();
+    ipcRenderer.on("whisperash-meeting-hotkey", listener);
+    return () => ipcRenderer.removeListener("whisperash-meeting-hotkey", listener);
+  },
+  onMeetingProgress: (callback) => {
+    const listener = (_event, progress) => callback(progress);
+    ipcRenderer.on("whisperash-meeting-progress", listener);
+    return () => ipcRenderer.removeListener("whisperash-meeting-progress", listener);
+  },
 });

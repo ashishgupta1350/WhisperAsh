@@ -81,12 +81,15 @@ export default function WhisperAshAccountPanel() {
   const [newPassword, setNewPassword] = useState("");
   const [geminiSaved, setGeminiSaved] = useState(false);
   const [geminiInput, setGeminiInput] = useState("");
+  const [deepgramSaved, setDeepgramSaved] = useState(false);
+  const [deepgramInput, setDeepgramInput] = useState("");
   const api = (window as unknown as { electronAPI?: Record<string, (...a: unknown[]) => Promise<unknown>> }).electronAPI;
   const cleanupModel = useSettingsStore((s) => s.cleanupModel);
   const setCleanupModel = useSettingsStore((s) => s.setCleanupModel);
 
   useEffect(() => {
     api?.getGeminiKey?.().then((k) => setGeminiSaved(!!k));
+    api?.getDeepgramKey?.().then((k) => setDeepgramSaved(!!k));
   }, [api]);
 
   const saveGemini = async (value: string) => {
@@ -94,6 +97,13 @@ export default function WhisperAshAccountPanel() {
     const k = await api?.getGeminiKey?.();
     setGeminiSaved(!!k);
     setGeminiInput("");
+  };
+
+  const saveDeepgram = async (value: string) => {
+    await api?.saveDeepgramKey?.(value.trim());
+    const k = await api?.getDeepgramKey?.();
+    setDeepgramSaved(!!k);
+    setDeepgramInput("");
   };
 
   useEffect(() => {
@@ -416,6 +426,34 @@ export default function WhisperAshAccountPanel() {
                   </Button>
                   {geminiSaved ? (
                     <Button size="sm" variant="outline" onClick={() => saveGemini("")}>
+                      Remove
+                    </Button>
+                  ) : null}
+                </div>
+              </SettingsRow>
+            </SettingsPanelRow>
+            <SettingsPanelRow>
+              <SettingsRow
+                label="Deepgram API key"
+                description={
+                  deepgramSaved
+                    ? "Saved: Record meeting falls back to Deepgram (with speakers) if Gemini fails."
+                    : "Optional, for Record meeting: the backup after Gemini. Key: console.deepgram.com."
+                }
+              >
+                <div className="flex gap-2">
+                  <Input
+                    className="w-64 h-8 text-xs"
+                    type="password"
+                    placeholder={deepgramSaved ? "•••••••• (saved)" : "Paste Deepgram API key"}
+                    value={deepgramInput}
+                    onChange={(e) => setDeepgramInput(e.target.value)}
+                  />
+                  <Button size="sm" disabled={!deepgramInput.trim()} onClick={() => saveDeepgram(deepgramInput)}>
+                    Save
+                  </Button>
+                  {deepgramSaved ? (
+                    <Button size="sm" variant="outline" onClick={() => saveDeepgram("")}>
                       Remove
                     </Button>
                   ) : null}

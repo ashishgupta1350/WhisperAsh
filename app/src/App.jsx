@@ -24,6 +24,7 @@ import { VoiceModePanelCore } from "./components/dictation/VoiceModePanelCore";
 import { PillTooltip } from "./components/dictation/PillTooltip";
 import { PillCommandMenu } from "./components/dictation/PillCommandMenu";
 import { LiquidCancelButton } from "./components/dictation/LiquidCancelButton";
+import { meetingPillStatus } from "./utils/whisperashMeetingHotkey";
 import { createMainWindowResizeCoordinator } from "./utils/mainWindowResizeCoordinator";
 import {
   LIVE_TRANSCRIPT_ENTRANCE_TIMING,
@@ -54,6 +55,22 @@ const UNMOUNTED_RESIZE = {
 export default function App() {
   const [isHovered, setIsHovered] = useState(false);
   const [isCommandMenuOpen, setIsCommandMenuOpen] = useState(false);
+  // WhisperAsh: "Record meeting" state from the control panel (relayed by main), so the pill can
+  // show that a meeting is being recorded and offer Stop instead of starting a dictation.
+  const [meetingRecorder, setMeetingRecorder] = useState(null);
+  const [meetingNow, setMeetingNow] = useState(() => Date.now());
+  useEffect(() => {
+    const bridge = window.whisperash;
+    if (!bridge?.onMeetingRecorderState) return undefined;
+    bridge.getMeetingRecorderState?.().then(setMeetingRecorder).catch(() => {});
+    return bridge.onMeetingRecorderState(setMeetingRecorder);
+  }, []);
+  const meetingPill = meetingPillStatus(meetingRecorder, meetingNow);
+  useEffect(() => {
+    if (!meetingPill.active) return undefined;
+    const timer = setInterval(() => setMeetingNow(Date.now()), 1000);
+    return () => clearInterval(timer);
+  }, [meetingPill.active]);
   const buttonRef = useRef(null);
   const pillPresenceRef = useRef(null);
   const { toast, dismiss, toastCount, dictationErrorActionCount, dismissByPresentation } =
@@ -409,7 +426,8 @@ export default function App() {
     }
   };
 
-  const micTooltip = getMicTooltip();
+  const micTooltip =
+    meetingPill.active && micState === "idle" ? `${meetingPill.label} (click to stop)` : getMicTooltip();
   const panelOpen = liveTranscript.open;
   const panelMounted = liveTranscript.mounted;
   const canReopenLiveTranscript =
@@ -441,6 +459,12 @@ export default function App() {
     : VOICE_PILL_FOOTPRINT.idle;
   const activateVoicePill = () => {
     if (!pillIsInteractive) return;
+    // A meeting is recording: the click shows its status and Stop, not a new dictation.
+    if (meetingPill.active && !isRecording && !isProcessing && !hasDragged) {
+      setWindowInteractivity(true);
+      setIsCommandMenuOpen((open) => !open);
+      return;
+    }
     if (canReopenLiveTranscript) {
       liveTranscript.reopen();
       return;
@@ -590,6 +614,14 @@ export default function App() {
               }}
             />
           </PillTooltip>
+          {meetingPill.active && (
+            <span
+              aria-hidden="true"
+              className={`pointer-events-none absolute -top-0.5 -right-0.5 z-10 h-3 w-3 rounded-full border-2 border-background ${
+                meetingPill.paused ? "bg-amber-500" : "bg-red-500 animate-pulse"
+              }`}
+            />
+          )}
           <LiquidCancelButton
             visible={voicePillInteraction.cancelVisible}
             fused={cancelFused}
@@ -612,6 +644,15 @@ export default function App() {
               isRecording={isRecording}
               agentAllowed={agentAllowed}
               meetingAllowed={meetingAllowed}
+              meetingStatus={meetingPill.active ? meetingPill.label : null}
+              onStopMeeting={() => {
+                setIsCommandMenuOpen(false);
+                void window.whisperash?.meetingRequest?.("stop");
+              }}
+              onOpenMeetings={() => {
+                setIsCommandMenuOpen(false);
+                void window.whisperash?.meetingRequest?.("open");
+              }}
               isHovered={isHovered}
               setWindowInteractivity={setWindowInteractivity}
               onToggleListening={() => {

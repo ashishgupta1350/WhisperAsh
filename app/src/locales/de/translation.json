@@ -131,7 +131,7 @@
       "windowsKeyListenerMissing": "\"{{hotkey}}\" benötigt den Windows-Tasten-Listener, der in dieser Installation fehlt. Wählen Sie ein Tastenkürzel mit einer normalen Taste.",
       "updateFailedCheckFormat": "Hotkey konnte nicht auf \"{{hotkey}}\" aktualisiert werden. Prüfen Sie, ob das Format gültig ist.",
       "trySuggestions": "Versuchen Sie: {{suggestions}}",
-      "slotConflict": "Diese Tastenkombination wird bereits für {{slot}} verwendet."
+      "slotConflict": "{{hotkey}} ist bereits dein {{slot}}. Wähle hier eine andere Taste oder ändere zuerst den {{slot}}."
     }
   },
   "systemSettings": {
@@ -3601,6 +3601,7 @@
   },
   "sidebar": {
     "insights": "Statistiken",
+    "meetings": "Meetings",
     "home": "Startseite",
     "notes": "Notizen",
     "upload": "Hochladen",

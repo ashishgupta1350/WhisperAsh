@@ -145,6 +145,15 @@ class WhisperAshSync {
     };
   }
 
+  /** Meetings: the account gateway is used whenever signed in (a provider's own key still wins). */
+  meetingAccount() {
+    const signedIn = !!(this.config.email && fs.existsSync(this.tokenPath));
+    const base = (this.config.serverUrl || "").replace(/\/+$/, "");
+    if (!signedIn || !/^https?:\/\//.test(base)) return null;
+    const token = this._readToken();
+    return token ? { base, token } : null;
+  }
+
   setEngineSource(source) {
     this.config.engineSource = source === "own" || source === "account" ? source : null;
     this._writeConfig();
@@ -416,6 +425,20 @@ class WhisperAshSync {
         .all()) {
         if (!current.has(id)) this._mark("dictionary", id, null, true);
       }
+
+      // Meetings (text only; audio never leaves this PC)
+      if (this.meetingsSource) {
+        const meetingIds = new Set();
+        for (const { id, data } of this.meetingsSource.syncItems()) {
+          meetingIds.add(id);
+          this._mark("meetings", id, data);
+        }
+        for (const { id } of this.db
+          .prepare("SELECT id FROM sync_map WHERE kind = 'meetings' AND deleted = 0")
+          .all()) {
+          if (!meetingIds.has(id) && !this.meetingsSource.isPending(id)) this._mark("meetings", id, null, true);
+        }
+      }
     });
     scan();
   }
@@ -439,27 +462,58 @@ class WhisperAshSync {
   }
 
   // ---------- push / pull ----------
+  _pushBody(rows) {
+    return {
+      items: rows.map((r) => ({
+        kind: r.kind,
+        id: r.id,
+        updated_at: r.updated_at,
+        deleted: !!r.deleted,
+        data: r.data ? JSON.parse(r.data) : {},
+      })),
+    };
+  }
+
+  _clearDirty(rows) {
+    const clear = this.db.prepare("UPDATE sync_map SET dirty = 0 WHERE kind = ? AND id = ? AND updated_at = ?");
+    this.db.transaction(() => rows.forEach((r) => clear.run(r.kind, r.id, r.updated_at)))();
+  }
+
   async _push() {
     for (;;) {
       const rows = this.db
-        .prepare("SELECT kind, id, updated_at, deleted, data FROM sync_map WHERE dirty = 1 LIMIT ?")
+        .prepare("SELECT kind, id, updated_at, deleted, data FROM sync_map WHERE dirty = 1 AND kind <> 'meetings' LIMIT ?")
         .all(PUSH_BATCH);
-      if (!rows.length) return;
-      await this._request("/sync/push", {
-        body: {
-          items: rows.map((r) => ({
-            kind: r.kind,
-            id: r.id,
-            updated_at: r.updated_at,
-            deleted: !!r.deleted,
-            data: r.data ? JSON.parse(r.data) : {},
-          })),
-        },
-      });
-      const clear = this.db.prepare(
-        "UPDATE sync_map SET dirty = 0 WHERE kind = ? AND id = ? AND updated_at = ?"
-      );
-      this.db.transaction(() => rows.forEach((r) => clear.run(r.kind, r.id, r.updated_at)))();
+      if (!rows.length) break;
+      await this._request("/sync/push", { body: this._pushBody(rows) });
+      this._clearDirty(rows);
+    }
+    await this._pushMeetings();
+  }
+
+  // Meetings go one per request (each can be up to 512 KB), apart from the other kinds, so a
+  // server that doesn't take them yet (400 invalid_item, before the Worker update) never holds
+  // up history and dictionary sync: they stay pending and are tried again on the next pass.
+  async _pushMeetings() {
+    const rows = this.db
+      .prepare("SELECT kind, id, updated_at, deleted, data FROM sync_map WHERE dirty = 1 AND kind = 'meetings'")
+      .all();
+    for (const row of rows) {
+      try {
+        await this._request("/sync/push", { body: this._pushBody([row]) });
+        this._clearDirty([row]);
+      } catch (err) {
+        if (err.status === 400 && err.message === "invalid_item") {
+          debugLogger.info("WhisperAsh server doesn't take meetings yet; will retry", {});
+          return;
+        }
+        if (err.status === 400 && err.message === "item_too_large") {
+          debugLogger.warn("WhisperAsh meeting too large to sync", { id: row.id });
+          this._clearDirty([row]);
+          continue;
+        }
+        throw err;
+      }
     }
   }
 
@@ -532,11 +586,16 @@ class WhisperAshSync {
       const word = item.data?.word || item.id.replace(/^w:/, "");
       if (item.deleted) dbm.applyDictionaryChanges({ remove: [word] }, "sync");
       else dbm.applyDictionaryChanges({ add: [word] }, "sync");
+    } else if (item.kind === "meetings") {
+      if (!this.meetingsSource || !this.meetingsSource.applyRemote(item)) return null;
     } else if (item.kind !== "settings") {
       return null;
     }
 
-    const hash = sha(JSON.stringify(item.deleted ? { deleted: true } : item.data));
+    // A pulled meeting is hashed as this PC will read it back, so the next scan doesn't push it again.
+    const hashData =
+      item.kind === "meetings" && !item.deleted ? this.meetingsSource.syncData(item.id) || item.data : item.data;
+    const hash = sha(JSON.stringify(item.deleted ? { deleted: true } : hashData));
     this.db
       .prepare(
         `INSERT INTO sync_map (kind, id, hash, updated_at, dirty, deleted, data) VALUES (?, ?, ?, ?, 0, ?, ?)

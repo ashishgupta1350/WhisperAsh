@@ -131,7 +131,7 @@
       "windowsKeyListenerMissing": "\"{{hotkey}}\" には Windows のキーリスナーが必要ですが、このインストールにはありません。通常のキーを使うショートカットを選んでください。",
       "updateFailedCheckFormat": "「{{hotkey}}」へのホットキーの更新に失敗しました。形式が正しいか確認してください。",
       "trySuggestions": "お試しください: {{suggestions}}",
-      "slotConflict": "このホットキーは既に{{slot}}で使用されています。"
+      "slotConflict": "{{hotkey}} はすでに{{slot}}に使われています。ここで別のキーを選ぶか、先に{{slot}}を変更してください。"
     }
   },
   "systemSettings": {
@@ -4428,6 +4428,7 @@
   },
   "sidebar": {
     "insights": "統計",
+    "meetings": "会議",
     "home": "ホーム",
     "notes": "ノート",
     "upload": "アップロード",

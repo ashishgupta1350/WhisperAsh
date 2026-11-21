@@ -97,6 +97,11 @@ import {
 } from "../helpers/translationChain";
 import { applyChineseScript, resolveChineseScriptTarget } from "../utils/chineseScript";
 import { getAgentName } from "../utils/agentName";
+import {
+  canUndoRetranscribe,
+  retranscribeDictationEntry,
+  undoRetranscribe,
+} from "../utils/whisperashRetranscribe";
 import HistoryView from "./HistoryView";
 import BackgroundActionToastListener from "./notes/BackgroundActionToastListener";
 import AssistantNoteUndoListener from "./notes/AssistantNoteUndoListener";
@@ -127,6 +132,7 @@ const ReferralModal = React.lazy(() => import("./ReferralModal"));
 const PersonalNotesView = React.lazy(() => import("./notes/PersonalNotesView"));
 const InsightsView = React.lazy(() => import("./InsightsView"));
 const DictionaryView = React.lazy(() => import("./DictionaryView"));
+const WhisperAshMeetings = React.lazy(() => import("./WhisperAshMeetings"));
 const UploadAudioView = React.lazy(() => import("./notes/UploadAudioView"));
 const IntegrationsView = React.lazy(() => import("./IntegrationsView"));
 const ChatView = React.lazy(() => import("./chat/ChatView"));
@@ -293,6 +299,35 @@ export default function ControlPanel({ initialSettingsSection }: ControlPanelPro
     setActiveView("dictionary");
   }, []);
   const policyActionsAllowed = usePolicyStore((state) => isPolicyActionAllowed(state));
+  // WhisperAsh: the meeting hotkey, tray, pill menu and meeting prompts drive "Record meeting"
+  // and show the Meetings page.
+  // A press made while this window was still loading is taken on mount.
+  useEffect(() => {
+    const bridge = window.whisperash;
+    if (!bridge?.onMeetingHotkey) return;
+    const handle = async () => {
+      const mode = await bridge.meetingTakeHotkey();
+      if (!mode) return;
+      setShowSettings(false);
+      setActiveView("meetings");
+      const { handleMeetingRequest } = await import("../utils/whisperashMeetingRecorder");
+      handleMeetingRequest(mode);
+    };
+    void handle();
+    return bridge.onMeetingHotkey(() => void handle());
+  }, []);
+  // After Stop, main opens the dashboard on that meeting; the page shows progress until the
+  // summary and transcript are ready.
+  const [openMeetingId, setOpenMeetingId] = useState<{ id: string } | null>(null);
+  useEffect(() => {
+    const bridge = window.whisperash;
+    if (!bridge?.onMeetingOpen) return;
+    return bridge.onMeetingOpen(({ id }) => {
+      setShowSettings(false);
+      setActiveView("meetings");
+      setOpenMeetingId({ id });
+    });
+  }, []);
   useEffect(() => {
     if (!isControlPanelViewAllowed(activeView, agentAllowedByPolicy, policyActionsAllowed)) {
       setActiveView("home");
@@ -781,6 +816,78 @@ export default function ControlPanel({ initialSettingsSection }: ControlPanelPro
       }
     },
     [toast, t]
+  );
+
+  // WhisperAsh: "Re-transcribe (better model)" — Gemini 3.6 Flash on the saved audio, then the
+  // normal dictation cleanup on Groq gpt-oss-120b. The old text can be undone.
+  const retranscribeDeps = useCallback(() => {
+    const storage = (() => {
+      try {
+        return window.localStorage;
+      } catch {
+        return null;
+      }
+    })();
+    return {
+      storage,
+      save: async (id: number, text: string, rawText: string | null) =>
+        window.electronAPI.updateTranscriptionText(id, text, rawText),
+    };
+  }, []);
+
+  const undoBetterRetranscribe = useCallback(
+    async (id: number) => {
+      const ok = await undoRetranscribe(id, retranscribeDeps());
+      toast({ title: ok ? "Earlier text restored." : "Nothing to undo.", variant: ok ? "default" : "destructive" });
+    },
+    [retranscribeDeps, toast]
+  );
+
+  const retranscribeBetter = useCallback(
+    async (id: number) => {
+      const bridge = window.whisperash;
+      if (!bridge?.retranscribeDictation) return;
+      try {
+        const entry = await window.electronAPI.getTranscriptionById(id);
+        if (!entry) throw new Error("This dictation is no longer in history.");
+        const outcome = await retranscribeDictationEntry(
+          { id, text: entry.text, raw_text: entry.raw_text ?? null },
+          {
+            ...retranscribeDeps(),
+            transcribe: (entryId) => bridge.retranscribeDictation(entryId),
+            cleanup: async (rawText, model) => {
+              const [{ default: ReasoningService }, { getSettings: getStoreSettings }] = await Promise.all([
+                import("../services/ReasoningService"),
+                import("../stores/settingsStore"),
+              ]);
+              const s = getStoreSettings();
+              return ReasoningService.processText(rawText, model, getAgentName(), {
+                provider: "groq",
+                inferenceScope: "dictationCleanup",
+                disableThinking: s.cleanupDisableThinking,
+                reasoningEffort: s.cleanupReasoningEffort,
+                requireCompleteOutput: true,
+              });
+            },
+          }
+        );
+        toast({
+          title: outcome.cleanupError ? "Re-transcribed (not cleaned up)" : "Re-transcribed with Gemini 3.6 Flash",
+          description: outcome.cleanupError
+            ? `Groq cleanup failed, so the entry has Gemini's transcript as is: ${outcome.cleanupError}`
+            : "Cleaned up with GPT-OSS 120B.",
+          variant: outcome.cleanupError ? "destructive" : "default",
+          actions: [{ label: "Undo", onClick: () => void undoBetterRetranscribe(id) }],
+        });
+      } catch (error) {
+        toast({
+          title: "Re-transcribe failed",
+          description: (error as Error).message,
+          variant: "destructive",
+        });
+      }
+    },
+    [retranscribeDeps, toast, undoBetterRetranscribe]
   );
 
   const retryTranscription = useCallback(
@@ -1398,6 +1505,9 @@ export default function ControlPanel({ initialSettingsSection }: ControlPanelPro
                   clearAllTranscriptions={clearAllTranscriptions}
                   onShowAudioInFolder={showAudioInFolder}
                   onRetryTranscription={retryTranscription}
+                  onRetranscribeBetter={window.whisperash?.retranscribeDictation ? retranscribeBetter : undefined}
+                  onUndoRetranscribe={undoBetterRetranscribe}
+                  canUndoRetranscribe={(id) => canUndoRetranscribe(id, retranscribeDeps().storage)}
                   showDiscarded={showDiscarded}
                   onToggleDiscarded={toggleShowDiscarded}
                   userName={user?.name}
@@ -1446,6 +1556,11 @@ export default function ControlPanel({ initialSettingsSection }: ControlPanelPro
                     notesHandOff={notesHandOff}
                     onNotesHandOffDone={finishNotesHandOff}
                   />
+                </Suspense>
+              )}
+              {activeView === "meetings" && (
+                <Suspense fallback={null}>
+                  <WhisperAshMeetings openMeeting={openMeetingId} />
                 </Suspense>
               )}
               {activeView === "dictionary" && (

@@ -131,7 +131,7 @@
       "windowsKeyListenerMissing": "「{{hotkey}}」需要 Windows 按鍵監聽程式，但此安裝中缺少該元件。請選擇包含一般按鍵的快捷鍵。",
       "updateFailedCheckFormat": "無法將快速鍵更新為「{{hotkey}}」。請檢查格式是否有效。",
       "trySuggestions": "試試看：{{suggestions}}",
-      "slotConflict": "此快捷鍵已用於{{slot}}。"
+      "slotConflict": "{{hotkey}} 已用作{{slot}}。請在此選擇其他按鍵，或先變更{{slot}}。"
     }
   },
   "systemSettings": {
@@ -4428,6 +4428,7 @@
   },
   "sidebar": {
     "insights": "統計",
+    "meetings": "會議",
     "home": "首頁",
     "notes": "筆記",
     "upload": "上傳",

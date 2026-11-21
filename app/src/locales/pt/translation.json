@@ -131,7 +131,7 @@
       "windowsKeyListenerMissing": "\"{{hotkey}}\" precisa do listener de teclas do Windows, que está faltando nesta instalação. Escolha um atalho com uma tecla comum.",
       "updateFailedCheckFormat": "Não foi possível atualizar o atalho para \"{{hotkey}}\". Verifique se o formato é válido.",
       "trySuggestions": "Tente: {{suggestions}}",
-      "slotConflict": "Este atalho já está sendo usado para {{slot}}."
+      "slotConflict": "{{hotkey}} já é o seu {{slot}}. Escolha outra tecla aqui ou altere primeiro o {{slot}}."
     }
   },
   "systemSettings": {
@@ -4455,6 +4455,7 @@
   },
   "sidebar": {
     "insights": "Estatísticas",
+    "meetings": "Reuniões",
     "home": "Início",
     "notes": "Notas",
     "upload": "Enviar",

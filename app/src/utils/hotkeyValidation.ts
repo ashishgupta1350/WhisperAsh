@@ -1,6 +1,6 @@
 import type { TFunction } from "i18next";
 import { getValidationMessage, normalizeHotkey } from "./hotkeyValidator";
-import { parseHotkeyList } from "./hotkeys";
+import { formatHotkeyLabelForPlatform, parseHotkeyList } from "./hotkeys";
 import { getPlatform } from "./platform";
 
 export function validateHotkeyForSlot(
@@ -21,7 +21,12 @@ export function validateHotkeyForSlot(
       (other) => normalizeHotkey(other, platform) === normalized
     );
     if (conflicts) {
-      return t("hotkey.errors.slotConflict", { slot: t(labelKey) });
+      // Name the key and the way out: a bare "already used" read as the field ignoring the key
+      // (Right Ctrl is the WhisperAsh dictation default on Windows).
+      return t("hotkey.errors.slotConflict", {
+        slot: t(labelKey),
+        hotkey: formatHotkeyLabelForPlatform(hotkey, platform),
+      });
     }
   }
 

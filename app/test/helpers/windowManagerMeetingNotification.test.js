@@ -1094,3 +1094,22 @@ test("a queued or undelivered navigation keeps its note session pending", async 
   assert.equal(manager.isMeetingNoteNavigationPending("other"), false);
   manager._meetingNavigationOperation = null;
 });
+
+test("WhisperAsh: manual meeting starts go to Record meeting; the hotkey toggles", async () => {
+  let starts = 0;
+  const requests = [];
+  const manager = createNormalWindowManager();
+  manager.meetingDetectionEngine = { startManualMeeting: async () => (starts += 1) };
+  manager.whisperashMeetingRequest = (mode, options) => requests.push({ mode, options });
+
+  await manager.startManualMeeting(); // tray / pill menu
+  await manager.startManualMeeting({ activate: false, toggle: true }); // meeting hotkey
+  manager.hotkeyManager.isInListeningMode = () => true;
+  await manager.startManualMeeting({ toggle: true }); // while a hotkey field is capturing
+
+  assert.equal(starts, 0, "the OpenWhispr live pipeline is never started");
+  assert.deepEqual(requests, [
+    { mode: "start", options: undefined },
+    { mode: "toggle", options: { activate: false, toggle: true } },
+  ]);
+});

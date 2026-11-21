@@ -131,7 +131,7 @@
       "windowsKeyListenerMissing": "\"{{hotkey}}\" needs the Windows key listener, which this install is missing. Choose a shortcut with a regular key.",
       "updateFailedCheckFormat": "Failed to update hotkey to \"{{hotkey}}\". Check the format is valid.",
       "trySuggestions": "Try: {{suggestions}}",
-      "slotConflict": "This hotkey is already used for {{slot}}."
+      "slotConflict": "{{hotkey}} is already your {{slot}}. Pick a different key here, or change the {{slot}} first."
     }
   },
   "systemSettings": {
@@ -2849,7 +2849,7 @@
       },
       "meetingHotkey": {
         "title": "Meeting Mode Hotkey",
-        "description": "Start meeting mode and snap the panel to the side of the screen",
+        "description": "Press once to start Record meeting (Meetings page), again to stop and transcribe. Must differ from the dictation hotkey.",
         "layoutLabel": "When triggered by hotkey, open in:",
         "layoutFullWidth": "Full width",
         "layoutSidePanel": "Side panel"
@@ -2887,7 +2887,7 @@
         "keepInClipboardDescription": "Keep dictated text in your clipboard so you can paste it manually if needed"
       },
       "startup": {
-        "launchAtLogin": "Launch at login",
+        "launchAtLogin": "Start WhisperAsh when Windows starts",
         "launchAtLoginDescription": "Start WhisperAsh in the background when you log in",
         "title": "Startup",
         "description": "Control how WhisperAsh behaves when it launches",
@@ -3476,6 +3476,7 @@
   "sidebar": {
     "home": "Home",
     "insights": "Insights",
+    "meetings": "Meetings",
     "notes": "Notes",
     "upload": "Upload",
     "dictionary": "Dictionary",

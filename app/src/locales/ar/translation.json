@@ -5925,7 +5925,7 @@
       "windowsKeyListenerMissing": "يحتاج \"{{hotkey}}\" إلى مستمع مفاتيح Windows، وهو غير موجود في هذا التثبيت. اختر اختصارًا يتضمن مفتاحًا عاديًا.",
       "updateFailedCheckFormat": "فشل تحديث الاختصار إلى \"{{hotkey}}\". تأكد من أن التنسيق صالح.",
       "trySuggestions": "جرّب: {{suggestions}}",
-      "slotConflict": "هذا الاختصار مستخدم بالفعل لـ {{slot}}."
+      "slotConflict": "{{hotkey}} مستخدم بالفعل لـ {{slot}}. اختر مفتاحًا آخر هنا، أو غيّر {{slot}} أولاً."
     }
   },
   "systemSettings": {
@@ -6292,6 +6292,7 @@
   },
   "sidebar": {
     "home": "الرئيسية",
+    "meetings": "الاجتماعات",
     "notes": "الملاحظات",
     "upload": "رفع",
     "dictionary": "القاموس",

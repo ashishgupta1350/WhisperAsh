@@ -1,11 +1,11 @@
 import type React from "react";
 import { useTranslation } from "react-i18next";
-import { Home, BarChart3, MessageSquare, NotebookPen, BookOpen, Upload, Blocks } from "./icons";
+import { Home, BarChart3, MessageSquare, NotebookPen, BookOpen, Upload, Blocks, Users } from "./icons";
 import { isAgentAllowed, isPolicyActionAllowed } from "../stores/policyRules";
 import { usePolicyStore } from "../stores/policyStore";
 
 export type ControlPanelView =
-  "home" | "insights" | "chat" | "personal-notes" | "dictionary" | "upload" | "integrations";
+  "home" | "insights" | "chat" | "personal-notes" | "dictionary" | "upload" | "integrations" | "meetings";
 
 export interface ControlPanelNavItem {
   id: ControlPanelView;
@@ -33,6 +33,7 @@ export function useControlPanelNavItems(): ControlPanelNavItem[] {
   return [
     { id: "home", label: t("sidebar.home"), icon: Home },
     { id: "insights", label: t("sidebar.insights"), icon: BarChart3 },
+    { id: "meetings", label: t("sidebar.meetings"), icon: Users },
     { id: "dictionary", label: t("sidebar.dictionary"), icon: BookOpen },
   ];
 }
