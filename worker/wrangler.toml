@@ -20,6 +20,7 @@ fallthrough = true
 #   ADMIN_EMAILS   - comma-separated emails that may open /admin
 #   KEY_SECRET     - long random string; encrypts keys saved from the dashboard
 #   GROQ_API_KEY   - default Groq key for signed-in users (or set it in the dashboard)
-#   GEMINI_API_KEY - default Gemini key (backup speech engine)
-# Optional vars: SIGNUPS_PER_IP (default 5 a day). Test-only: GROQ_UPSTREAM, GEMINI_UPSTREAM,
+#   GEMINI_API_KEY - default Gemini key (backup speech engine, meeting recorder)
+#   DEEPGRAM_API_KEY - default Deepgram key (meeting recorder backup; or set it in the dashboard)
+# Optional vars: SIGNUPS_PER_IP (default 5 a day). Test-only: GROQ_UPSTREAM, GEMINI_UPSTREAM, DEEPGRAM_UPSTREAM,
 # ALLOW_TEST_CLOCK=1 (lets tests set the time with an x-test-now header; never set in production).

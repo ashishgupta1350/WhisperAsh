@@ -8,7 +8,7 @@
     "dev": "wrangler dev --ip 127.0.0.1 --port 8787",
     "test": "node test/api.test.mjs",
     "deploy": "wrangler deploy",
-    "dev:test": "wrangler dev --ip 127.0.0.1 --port 8789 --persist-to .wrangler/test-state --var SIGNUP_CODE: --var ADMIN_EMAILS:admin@example.test --var GROQ_API_KEY:test-groq-owner-key-0000 --var GEMINI_API_KEY:test-gemini-owner-key-000 --var KEY_SECRET:test-only-key-secret-0123456789 --var GROQ_UPSTREAM:http://127.0.0.1:8791 --var GEMINI_UPSTREAM:http://127.0.0.1:8791 --var ALLOW_TEST_CLOCK:1 --var SIGNUPS_PER_IP:1000",
+    "dev:test": "wrangler dev --ip 127.0.0.1 --port 8789 --persist-to .wrangler/test-state --var SIGNUP_CODE: --var ADMIN_EMAILS:admin@example.test --var GROQ_API_KEY:test-groq-owner-key-0000 --var GEMINI_API_KEY:test-gemini-owner-key-000 --var KEY_SECRET:test-only-key-secret-0123456789 --var GROQ_UPSTREAM:http://127.0.0.1:8791 --var GEMINI_UPSTREAM:http://127.0.0.1:8791 --var DEEPGRAM_UPSTREAM:http://127.0.0.1:8791 --var DEEPGRAM_API_KEY:test-deepgram-owner-key-0 --var ALLOW_TEST_CLOCK:1 --var SIGNUPS_PER_IP:1000",
     "test:gateway": "node test/gateway.test.mjs",
     "db:test": "wrangler d1 execute whisperash --local --persist-to .wrangler/test-state --file schema.sql"
   },

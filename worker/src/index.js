@@ -2,7 +2,8 @@
 // Auth: email + password (PBKDF2-SHA256 with per-user salt and a server-side pepper),
 // opaque session tokens (only their SHA-256 is stored). Sync: last-write-wins per record.
 // Gateway: signed-in users dictate through the owner's Groq/Gemini keys (/groq/*, /gemini/*)
-// with a per-user word limit; the owner manages users, limits and keys at /admin.
+// with a per-user word limit; the meeting recorder uses /gemini/*:generateContent, /deepgram/* and
+// Groq with a per-user meeting-minutes limit. The owner manages users, limits and keys at /admin.
 // No key or admin email lives in this file: they are Worker secrets (see wrangler.toml).
 
 import ADMIN_HTML from './admin.html';
@@ -14,7 +15,9 @@ const LOCK_MS = 15 * 60 * 1000;
 const PULL_LIMIT = 500;
 const PUSH_LIMIT = 200;
 const MAX_ITEM_BYTES = 64 * 1024;
-const KINDS = new Set(['history', 'dictionary', 'settings', 'notes']);
+const MAX_MEETING_ITEM_BYTES = 512 * 1024;  // a 2-3 hour transcript + summary (text only, never audio)
+const MAX_PUSH_BODY = 6 * 1024 * 1024;
+const KINDS = new Set(['history', 'dictionary', 'settings', 'notes', 'meetings', 'folders']);
 
 const enc = new TextEncoder();
 
@@ -41,9 +44,9 @@ function json(body, status = 200) {
   });
 }
 
-async function readJson(request) {
+async function readJson(request, maxBytes = 2 * 1024 * 1024) {
   const len = Number(request.headers.get('content-length') || 0);
-  if (len > 2 * 1024 * 1024) throw new HttpError(413, 'body_too_large');
+  if (len > maxBytes) throw new HttpError(413, 'body_too_large');
   try { return await request.json(); } catch { throw new HttpError(400, 'invalid_json'); }
 }
 
@@ -54,7 +57,7 @@ async function route(request, env) {
 
   if (m === 'GET' && path === '/') return json({ ok: true, service: 'whisperash-sync' });
   if (m === 'GET' && path === '/admin') return adminPage();
-  const isGateway = path.startsWith('/groq/') || path.startsWith('/gemini/');
+  const isGateway = path.startsWith('/groq/') || path.startsWith('/gemini/') || path.startsWith('/deepgram/');
   if (m === 'OPTIONS' && isGateway) return corsPreflight(request);
   if (!env.PEPPER || env.PEPPER.length < 16) throw new HttpError(500, 'server_not_configured');
   await ensureSchema(env);
@@ -73,7 +76,7 @@ async function route(request, env) {
   }
   if (m === 'GET' && path === '/me') {
     const u = await env.DB.prepare(
-      'SELECT id, email, created_at, status, word_limit, limit_period FROM users WHERE id = ?'
+      'SELECT id, email, created_at, status, word_limit, limit_period, meeting_limit_min FROM users WHERE id = ?'
     ).bind(session.userId).first();
     const now = clock(request, env);
     return json({
@@ -260,7 +263,7 @@ async function authenticate(request, env) {
 
 // ---------- sync ----------
 async function push(request, env, session) {
-  const body = await readJson(request);
+  const body = await readJson(request, MAX_PUSH_BODY);
   const items = Array.isArray(body.items) ? body.items : null;
   if (!items) throw new HttpError(400, 'items_required');
   if (items.length > PUSH_LIMIT) throw new HttpError(400, 'too_many_items');
@@ -270,7 +273,7 @@ async function push(request, env, session) {
     if (!it || !KINDS.has(it.kind) || typeof it.id !== 'string' || !it.id || it.id.length > 100) throw new HttpError(400, 'invalid_item');
     if (!Number.isFinite(it.updated_at)) throw new HttpError(400, 'invalid_item');
     const data = JSON.stringify(it.data ?? {});
-    if (data.length > MAX_ITEM_BYTES) throw new HttpError(400, 'item_too_large');
+    if (data.length > (it.kind === 'meetings' ? MAX_MEETING_ITEM_BYTES : MAX_ITEM_BYTES)) throw new HttpError(400, 'item_too_large');
     // Clamp client clocks that run far ahead so one bad clock cannot win forever.
     const updatedAt = Math.min(Math.trunc(it.updated_at), now + 5 * 60 * 1000);
     stmts.push(env.DB.prepare(
@@ -328,16 +331,25 @@ async function ensureSchema(env) {
     env.DB.prepare(`CREATE TABLE IF NOT EXISTS reset_requests (
       user_id TEXT PRIMARY KEY, requested_at INTEGER NOT NULL, note TEXT)`),
   ]);
-  const { results } = await env.DB.prepare('PRAGMA table_info(users)').all();
-  const have = new Set(results.map((c) => c.name));
-  const add = [
-    ['word_limit', 'INTEGER'],                       // NULL = the default limit
-    ['limit_period', 'TEXT'],                        // NULL/'day' or 'week'
-    ['status', "TEXT NOT NULL DEFAULT 'active'"],    // 'active' | 'blocked'
-    ['last_active', 'INTEGER'],
-  ].filter(([name]) => !have.has(name));
-  for (const [name, type] of add) {
-    await env.DB.prepare(`ALTER TABLE users ADD COLUMN ${name} ${type}`).run();
+  const columns = {
+    users: [
+      ['word_limit', 'INTEGER'],                       // NULL = the default limit
+      ['limit_period', 'TEXT'],                        // NULL/'day' or 'week'
+      ['status', "TEXT NOT NULL DEFAULT 'active'"],    // 'active' | 'blocked'
+      ['last_active', 'INTEGER'],
+      ['meeting_limit_min', 'INTEGER'],                // NULL = the default meeting minutes a day
+    ],
+    usage: [
+      ['meeting_seconds', 'INTEGER NOT NULL DEFAULT 0'],
+      ['meeting_requests', 'INTEGER NOT NULL DEFAULT 0'],
+    ],
+  };
+  for (const [table, cols] of Object.entries(columns)) {
+    const { results } = await env.DB.prepare(`PRAGMA table_info(${table})`).all();
+    const have = new Set(results.map((c) => c.name));
+    for (const [name, type] of cols.filter(([n]) => !have.has(n))) {
+      await env.DB.prepare(`ALTER TABLE ${table} ADD COLUMN ${name} ${type}`).run();
+    }
   }
   schemaReady = true;
 }
@@ -363,6 +375,8 @@ function periodRange(period, ms) {
 // ---------- config, limits, usage ----------
 const DEFAULT_WORD_LIMIT = 2000;
 const DEFAULT_CHAT_CAP = 300;     // cleanup/notes calls a day; stops use as a free chatbot
+const DEFAULT_MEETING_MINUTES = 120;  // recorded meeting audio a day (IST), per user
+const DEFAULT_MEETING_CAP = 150;      // meeting calls a day (audio parts + romanize + summary)
 async function getConfig(env) {
   const { results } = await env.DB.prepare('SELECT key, value FROM config').all();
   return Object.fromEntries(results.map((r) => [r.key, r.value]));
@@ -379,19 +393,33 @@ async function planFor(env, user, now, config) {
   ).bind(user.id, r.from, r.to).first();
   const keys = await env.DB.prepare('SELECT provider FROM user_keys WHERE user_id = ?').bind(user.id).all();
   const own = new Set(keys.results.map((k) => k.provider));
+  // Meetings: minutes of audio per IST day, separate from dictation words.
+  const meetingLimitMin = user.meeting_limit_min ?? intOr(cfg.default_meeting_minutes, DEFAULT_MEETING_MINUTES);
+  const mt = await env.DB.prepare(
+    'SELECT meeting_seconds, meeting_requests FROM usage WHERE user_id = ? AND day = ?'
+  ).bind(user.id, istDay(now)).first();
+  const meetingSeconds = mt?.meeting_seconds || 0;
+  const meetingUsedMin = Math.ceil(meetingSeconds / 60);
   return {
     limit, period, used: u.words, left: Math.max(0, limit - u.words), resetsAt: r.resetsAt,
-    status: user.status || 'active', ownKeys: { groq: own.has('groq'), gemini: own.has('gemini') },
+    status: user.status || 'active',
+    ownKeys: { groq: own.has('groq'), gemini: own.has('gemini'), deepgram: own.has('deepgram') },
+    meetingLimitMin, meetingUsedMin, meetingLeftMin: Math.max(0, meetingLimitMin - meetingUsedMin),
+    meetingSeconds, meetingRequests: mt?.meeting_requests || 0,
+    meetingResetsAt: periodRange('day', now).resetsAt,
   };
 }
 
-async function recordUsage(env, userId, now, { words = 0, stt = 0, chat = 0 }) {
+async function recordUsage(env, userId, now, { words = 0, stt = 0, chat = 0, meetingSeconds = 0, meeting = 0 }) {
   await env.DB.batch([
     env.DB.prepare(
-      `INSERT INTO usage (user_id, day, words, stt_requests, chat_requests) VALUES (?, ?, ?, ?, ?)
+      `INSERT INTO usage (user_id, day, words, stt_requests, chat_requests, meeting_seconds, meeting_requests)
+       VALUES (?, ?, ?, ?, ?, ?, ?)
        ON CONFLICT(user_id, day) DO UPDATE SET words = words + excluded.words,
-         stt_requests = stt_requests + excluded.stt_requests, chat_requests = chat_requests + excluded.chat_requests`
-    ).bind(userId, istDay(now), words, stt, chat),
+         stt_requests = stt_requests + excluded.stt_requests, chat_requests = chat_requests + excluded.chat_requests,
+         meeting_seconds = meeting_seconds + excluded.meeting_seconds,
+         meeting_requests = meeting_requests + excluded.meeting_requests`
+    ).bind(userId, istDay(now), words, stt, chat, Math.max(0, Math.round(meetingSeconds)), meeting),
     env.DB.prepare('UPDATE users SET last_active = ? WHERE id = ?').bind(Date.now(), userId),
   ]);
 }
@@ -414,8 +442,8 @@ async function openKey(env, sealed) {
   return new TextDecoder().decode(pt);
 }
 function keyHint(k) { return k ? `…${k.slice(-4)}` : null; }
-const PROVIDERS = new Set(['groq', 'gemini']);
-const SECRET_FOR = { groq: 'GROQ_API_KEY', gemini: 'GEMINI_API_KEY' };
+const PROVIDERS = new Set(['groq', 'gemini', 'deepgram']);
+const SECRET_FOR = { groq: 'GROQ_API_KEY', gemini: 'GEMINI_API_KEY', deepgram: 'DEEPGRAM_API_KEY' };
 
 // Which key serves this user: their own (set by the admin) > dashboard default > Worker secret.
 async function keyFor(env, userId, provider, cfg) {
@@ -430,13 +458,19 @@ const GROQ_MODELS_CHAT = new Set(['qwen/qwen3.8-27b', 'openai/gpt-oss-120b', 'op
 const GEMINI_MODELS = new Set(['gemini-3.5-transcribe']);
 const MAX_AUDIO_BYTES = 25 * 1024 * 1024;
 const MAX_CHAT_TOKENS = 4096;
+// Meeting recorder: Gemini generateContent (audio parts + text), Deepgram batch, Groq Whisper.
+const GEMINI_MEETING_MODELS = new Set(['gemini-3.5-flash', 'gemini-3.5-flash-lite', 'gemini-3.6-flash']);
+const MAX_GEMINI_BODY = 20 * 1024 * 1024;     // Gemini's inline request limit
+const MAX_DEEPGRAM_BYTES = 60 * 1024 * 1024;
+const DEEPGRAM_PARAMS = new Set(['model', 'language', 'diarize', 'utterances', 'smart_format', 'punctuate', 'paragraphs']);
+const AUDIO_BYTES_PER_SECOND = 4000;           // 32 kbit/s: used only when a provider reports no duration
 
 function cors(request) {
   return {
     'access-control-allow-origin': '*',
     'access-control-allow-methods': 'POST, OPTIONS',
     'access-control-allow-headers': request.headers.get('access-control-request-headers') || 'authorization, content-type',
-    'access-control-expose-headers': 'x-whisperash-words-left, x-whisperash-limit, x-whisperash-resets-at',
+    'access-control-expose-headers': 'x-whisperash-words-left, x-whisperash-limit, x-whisperash-resets-at, x-whisperash-meeting-left-min',
     'access-control-max-age': '86400',
   };
 }
@@ -453,41 +487,71 @@ async function gateway(request, env, path) {
     '/groq/openai/v1/chat/completions': 'chat',
     '/gemini/v1beta/interactions': 'gemini',
   };
-  const kind = routes[path];
+  let kind = routes[path];
+  let geminiModel = null;
+  const gm = /^\/gemini\/v1beta\/models\/([a-z0-9.-]+):generateContent$/.exec(path);
+  if (gm) { kind = 'gemini_gc'; geminiModel = gm[1]; }
+  if (path === '/deepgram/v1/listen') kind = 'deepgram';
   if (request.method !== 'POST' || !kind) return oaiError(request, 404, 'not_found', 'Unknown WhisperAsh endpoint.');
   let session;
   try { session = await authenticate(request, env); } catch {
     return oaiError(request, 401, 'session_expired', 'Please sign in to WhisperAsh again.');
   }
   const now = clock(request, env);
-  const user = await env.DB.prepare('SELECT id, email, status, word_limit, limit_period FROM users WHERE id = ?').bind(session.userId).first();
+  const user = await env.DB.prepare(
+    'SELECT id, email, status, word_limit, limit_period, meeting_limit_min FROM users WHERE id = ?'
+  ).bind(session.userId).first();
   if (!user) return oaiError(request, 401, 'session_expired', 'Please sign in to WhisperAsh again.');
   if (user.status === 'blocked') return oaiError(request, 403, 'account_blocked', 'This WhisperAsh account is paused. Contact the admin.');
 
+  // Meeting calls count meeting minutes, not dictation words. Gemini generateContent and Deepgram
+  // are used only by the meeting recorder; Groq calls say so with a header.
+  // A History "re-transcribe" sends generateContent with purpose "dictation": counted as words instead.
+  const purpose = request.headers.get('x-whisperash-purpose');
+  const meeting = kind === 'deepgram' || purpose === 'meeting' || (kind === 'gemini_gc' && purpose !== 'dictation');
   const cfg = await getConfig(env);
-  const provider = kind === 'gemini' ? 'gemini' : 'groq';
+  const provider = kind.startsWith('gemini') ? 'gemini' : kind === 'deepgram' ? 'deepgram' : 'groq';
   const { key, own } = await keyFor(env, user.id, provider, cfg);
   if (!key) return oaiError(request, 503, 'no_key_configured', `WhisperAsh has no ${provider} key set up yet. Contact the admin.`);
 
   const plan = await planFor(env, user, now, cfg);
   const limitHeaders = {
     'x-whisperash-words-left': String(plan.left), 'x-whisperash-limit': String(plan.limit),
-    'x-whisperash-resets-at': String(plan.resetsAt),
+    'x-whisperash-resets-at': String(plan.resetsAt), 'x-whisperash-meeting-left-min': String(plan.meetingLeftMin),
   };
-  if (!own && plan.used >= plan.limit) {
+  if (!own && meeting) {
+    const cap = intOr(cfg.meeting_daily_cap, DEFAULT_MEETING_CAP);
+    if (plan.meetingSeconds >= plan.meetingLimitMin * 60 || plan.meetingRequests >= cap) {
+      return oaiError(request, 429, 'meeting_limit',
+        `You've used your ${plan.meetingLimitMin} meeting minutes for today. It resets at midnight (India time).`,
+        { limitMin: plan.meetingLimitMin, usedMin: plan.meetingUsedMin, resetsAt: plan.meetingResetsAt });
+    }
+  } else if (!own && plan.used >= plan.limit) {
     const when = plan.period === 'week' ? 'next Monday' : 'at midnight (India time)';
     return oaiError(request, 429, 'word_limit',
       `You've used your ${plan.limit.toLocaleString('en-IN')} words for ${plan.period === 'week' ? 'this week' : 'today'}. It resets ${when}.`,
       { limit: plan.limit, used: plan.used, resetsAt: plan.resetsAt });
   }
 
-  if (kind === 'chat') return gatewayChat(request, env, user, key, own, cfg, now, limitHeaders);
-  if (kind === 'stt') return gatewayStt(request, env, user, key, now, limitHeaders);
-  return gatewayGemini(request, env, user, key, now, limitHeaders);
+  const ctx = { request, env, user, key, own, cfg, now, limitHeaders, meeting };
+  if (kind === 'chat') return gatewayChat(ctx);
+  if (kind === 'stt') return gatewayStt(ctx);
+  if (kind === 'gemini_gc') return gatewayGeminiGenerate(ctx, geminiModel);
+  if (kind === 'deepgram') return gatewayDeepgram(ctx);
+  return gatewayGemini(ctx);
+}
+
+function okJson(ctx, text) {
+  return new Response(text, { status: 200, headers: { 'content-type': 'application/json', 'cache-control': 'no-store', ...ctx.limitHeaders, ...cors(ctx.request) } });
+}
+// Seconds of audio for meeting minutes: what the provider reports, else an estimate from the upload size.
+function audioSeconds(reported, bytes) {
+  const n = Number(reported);
+  return Number.isFinite(n) && n > 0 ? n : bytes / AUDIO_BYTES_PER_SECOND;
 }
 
 function upstreamFailure(request, status, bodyText, provider) {
-  if (status === 401 || status === 403) {
+  if (status === 401 || status === 402 || status === 403) {
     return oaiError(request, 502, 'upstream_key', `The WhisperAsh ${provider} key was refused. Tell the admin.`);
   }
   if (status === 429) {
@@ -496,8 +560,10 @@ function upstreamFailure(request, status, bodyText, provider) {
   return new Response(bodyText, { status, headers: { 'content-type': 'application/json', ...cors(request) } });
 }
 
-async function gatewayStt(request, env, user, key, now, limitHeaders) {
-  if (Number(request.headers.get('content-length') || 0) > MAX_AUDIO_BYTES) {
+async function gatewayStt(ctx) {
+  const { request, env, user, key, now, limitHeaders } = ctx;
+  const bytes = Number(request.headers.get('content-length') || 0);
+  if (bytes > MAX_AUDIO_BYTES) {
     return oaiError(request, 413, 'audio_too_large', 'Recording is too long.');
   }
   const base = env.GROQ_UPSTREAM || 'https://api.groq.com';
@@ -509,18 +575,23 @@ async function gatewayStt(request, env, user, key, now, limitHeaders) {
   });
   const text = await res.text();
   if (!res.ok) return upstreamFailure(request, res.status, text, 'Groq');
-  let words = 0;
-  try { words = countWords(JSON.parse(text).text); } catch { /* non-JSON response format: count nothing */ }
-  await recordUsage(env, user.id, now, { words, stt: 1 });
+  let parsed = null;
+  try { parsed = JSON.parse(text); } catch { /* non-JSON response format */ }
+  if (ctx.meeting) {
+    await recordUsage(env, user.id, now, { meetingSeconds: audioSeconds(parsed?.duration, bytes), meeting: 1, stt: 1 });
+  } else {
+    await recordUsage(env, user.id, now, { words: countWords(parsed?.text), stt: 1 });
+  }
   return new Response(text, { status: 200, headers: { 'content-type': 'application/json', 'cache-control': 'no-store', ...limitHeaders, ...cors(request) } });
 }
 
-async function gatewayChat(request, env, user, key, own, cfg, now, limitHeaders) {
+async function gatewayChat(ctx) {
+  const { request, env, user, key, own, cfg, now, limitHeaders } = ctx;
   const body = await readJson(request).catch(() => null);
   if (!body || !GROQ_MODELS_CHAT.has(body.model)) {
     return oaiError(request, 400, 'model_not_allowed', 'This model is not available through WhisperAsh.');
   }
-  if (!own) {
+  if (!own && !ctx.meeting) {   // meeting calls have their own daily cap (checked in gateway)
     const cap = intOr(cfg.chat_daily_cap, DEFAULT_CHAT_CAP);
     const t = await env.DB.prepare('SELECT chat_requests FROM usage WHERE user_id = ? AND day = ?').bind(user.id, istDay(now)).first();
     if (t && t.chat_requests >= cap) return oaiError(request, 429, 'chat_limit', 'Daily cleanup limit reached. It resets at midnight (India time).');
@@ -536,7 +607,7 @@ async function gatewayChat(request, env, user, key, own, cfg, now, limitHeaders)
     body: JSON.stringify(body),
   });
   if (!res.ok) return upstreamFailure(request, res.status, await res.text(), 'Groq');
-  await recordUsage(env, user.id, now, { chat: 1 });
+  await recordUsage(env, user.id, now, ctx.meeting ? { meeting: 1 } : { chat: 1 });
   // Streamed answers pass straight through.
   return new Response(res.body, {
     status: 200,
@@ -544,7 +615,8 @@ async function gatewayChat(request, env, user, key, own, cfg, now, limitHeaders)
   });
 }
 
-async function gatewayGemini(request, env, user, key, now, limitHeaders) {
+async function gatewayGemini(ctx) {
+  const { request, env, user, key, now, limitHeaders } = ctx;
   if (Number(request.headers.get('content-length') || 0) > MAX_AUDIO_BYTES * 1.4) {
     return oaiError(request, 413, 'audio_too_large', 'Recording is too long.');
   }
@@ -565,8 +637,69 @@ async function gatewayGemini(request, env, user, key, now, limitHeaders) {
     const out = j.output_text || (j.steps || []).flatMap((s) => s.content || []).filter((p) => p.type === 'text').map((p) => p.text).join(' ');
     words = countWords(out);
   } catch { /* count nothing */ }
-  await recordUsage(env, user.id, now, { words, stt: 1 });
+  if (ctx.meeting) {
+    const bytes = Number(request.headers.get('content-length') || 0) * 0.75;   // base64 inside JSON
+    await recordUsage(env, user.id, now, { meetingSeconds: audioSeconds(0, bytes), meeting: 1, stt: 1 });
+  } else {
+    await recordUsage(env, user.id, now, { words, stt: 1 });
+  }
   return new Response(text, { status: 200, headers: { 'content-type': 'application/json', 'cache-control': 'no-store', ...limitHeaders, ...cors(request) } });
+}
+
+// Meeting recorder: Gemini generateContent, body passed through untouched (multi-MB base64 audio is
+// not parsed, so the Worker's CPU time stays tiny). Minutes come from Gemini's audio token count.
+async function gatewayGeminiGenerate(ctx, model) {
+  const { request, env, user, key, now } = ctx;
+  if (!GEMINI_MEETING_MODELS.has(model)) return oaiError(request, 400, 'model_not_allowed', 'This model is not available through WhisperAsh.');
+  const bytes = Number(request.headers.get('content-length') || 0);
+  if (bytes > MAX_GEMINI_BODY) return oaiError(request, 413, 'audio_too_large', 'This part of the recording is too large.');
+  const base = env.GEMINI_UPSTREAM || 'https://generativelanguage.googleapis.com';
+  const res = await fetch(`${base}/v1beta/models/${model}:generateContent`, {
+    method: 'POST',
+    headers: { 'x-goog-api-key': key, 'content-type': 'application/json' },
+    body: request.body,
+  });
+  const text = await res.text();
+  if (!res.ok) return upstreamFailure(request, res.status, text, 'Gemini');
+  if (!ctx.meeting) {          // dictation re-transcribe: count the words of the answer
+    let words = 0;
+    try {
+      const parts = JSON.parse(text).candidates?.[0]?.content?.parts || [];
+      words = countWords(parts.map((p) => p.text || '').join(' '));
+    } catch { /* count nothing */ }
+    await recordUsage(env, user.id, now, { words, stt: 1 });
+    return okJson(ctx, text);
+  }
+  let seconds = 0;
+  try {
+    const details = JSON.parse(text).usageMetadata?.promptTokensDetails || [];
+    const audioTokens = details.filter((d) => d.modality === 'AUDIO').reduce((n, d) => n + (d.tokenCount || 0), 0);
+    seconds = audioTokens / 32;                      // Gemini counts 32 tokens per second of audio
+    if (!details.length && bytes > 200 * 1024) seconds = audioSeconds(0, bytes * 0.75);
+  } catch { seconds = bytes > 200 * 1024 ? audioSeconds(0, bytes * 0.75) : 0; }
+  await recordUsage(env, user.id, now, { meetingSeconds: seconds, meeting: 1 });
+  return okJson(ctx, text);
+}
+
+// Meeting recorder: Deepgram batch transcription. Audio streamed through; only known options pass.
+async function gatewayDeepgram(ctx) {
+  const { request, env, user, key, now } = ctx;
+  const bytes = Number(request.headers.get('content-length') || 0);
+  if (bytes > MAX_DEEPGRAM_BYTES) return oaiError(request, 413, 'audio_too_large', 'This part of the recording is too large.');
+  const q = new URLSearchParams();
+  for (const [k, v] of new URL(request.url).searchParams) if (DEEPGRAM_PARAMS.has(k)) q.append(k, v.slice(0, 40));
+  const base = env.DEEPGRAM_UPSTREAM || 'https://api.deepgram.com';
+  const res = await fetch(`${base}/v1/listen?${q}`, {
+    method: 'POST',
+    headers: { authorization: `Token ${key}`, 'content-type': request.headers.get('content-type') || 'application/octet-stream' },
+    body: request.body,
+  });
+  const text = await res.text();
+  if (!res.ok) return upstreamFailure(request, res.status, text, 'Deepgram');
+  let reported = 0;
+  try { reported = JSON.parse(text).metadata?.duration; } catch { /* estimate from size */ }
+  await recordUsage(env, user.id, now, { meetingSeconds: audioSeconds(reported, bytes), meeting: 1, stt: 1 });
+  return okJson(ctx, text);
 }
 
 // ---------- admin ----------
@@ -600,9 +733,10 @@ async function adminApi(request, env, session, path) {
     const today = istDay(now);
     const week = periodRange('week', now).from;
     const { results } = await env.DB.prepare(
-      `SELECT u.id, u.email, u.created_at, u.last_active, u.status, u.word_limit, u.limit_period,
-         (SELECT COALESCE(SUM(words), 0) FROM usage WHERE user_id = u.id AND day = ?) AS words_today,
-         (SELECT COALESCE(SUM(words), 0) FROM usage WHERE user_id = u.id AND day >= ?) AS words_week,
+      `SELECT u.id, u.email, u.created_at, u.last_active, u.status, u.word_limit, u.limit_period, u.meeting_limit_min,
+         (SELECT COALESCE(SUM(words), 0) FROM usage WHERE user_id = u.id AND day = ?1) AS words_today,
+         (SELECT COALESCE(SUM(meeting_seconds), 0) FROM usage WHERE user_id = u.id AND day = ?1) AS meeting_seconds_today,
+         (SELECT COALESCE(SUM(words), 0) FROM usage WHERE user_id = u.id AND day >= ?2) AS words_week,
          (SELECT GROUP_CONCAT(provider || ':' || COALESCE(hint, '')) FROM user_keys WHERE user_id = u.id) AS keys
        FROM users u ORDER BY COALESCE(u.last_active, u.created_at) DESC`
     ).bind(today, week).all();
@@ -611,15 +745,61 @@ async function adminApi(request, env, session, path) {
       if (cfg[`${p}_key`]) keys[p] = { source: 'dashboard', hint: cfg[`${p}_hint`] || null };
       else keys[p] = { source: env[SECRET_FOR[p]] ? 'worker_secret' : 'none', hint: keyHint(env[SECRET_FOR[p]]) };
     }
+
+    // Whole-service view: allowance and words left across everyone on the owner's keys, plus the
+    // last 30 India days of usage for the dashboard chart.
+    const defaultLimit = intOr(cfg.default_limit, DEFAULT_WORD_LIMIT);
+    const totals = {
+      users: results.length, paused: 0, ownKeys: 0, activeToday: 0, activeWeek: 0,
+      wordsToday: 0, wordsWeek: 0,
+      allowanceToday: 0, leftToday: 0,      // users on a daily limit
+      allowanceWeek: 0, leftWeek: 0,        // users on a weekly limit
+      meetingMinutesToday: 0,
+    };
+    for (const u of results) {
+      totals.wordsToday += u.words_today;
+      totals.meetingMinutesToday += u.meeting_seconds_today / 60;
+      totals.wordsWeek += u.words_week;
+      if (u.words_today > 0) totals.activeToday++;
+      if (u.words_week > 0) totals.activeWeek++;
+      if (u.status === 'blocked') { totals.paused++; continue; }
+      if (u.keys && /(^|,)groq:/.test(u.keys)) { totals.ownKeys++; continue; }
+      const limit = u.word_limit ?? defaultLimit;
+      if (u.limit_period === 'week') {
+        totals.allowanceWeek += limit;
+        totals.leftWeek += Math.max(0, limit - u.words_week);
+      } else {
+        totals.allowanceToday += limit;
+        totals.leftToday += Math.max(0, limit - u.words_today);
+      }
+    }
+    const since = istDay(now - 29 * 864e5);
+    const daily = (await env.DB.prepare(
+      `SELECT day, SUM(words) AS words, SUM(stt_requests) AS stt, SUM(chat_requests) AS chat,
+         SUM(meeting_seconds) AS meeting_seconds,
+         COUNT(DISTINCT CASE WHEN words > 0 OR chat_requests > 0 OR meeting_seconds > 0 THEN user_id END) AS users
+       FROM usage WHERE day >= ? GROUP BY day ORDER BY day`
+    ).bind(since).all()).results;
+    const todayRow = daily.find((d) => d.day === today) || { stt: 0, chat: 0 };
+    totals.sttToday = todayRow.stt || 0;
+    totals.chatToday = todayRow.chat || 0;
+    totals.meetingMinutesToday = Math.round(totals.meetingMinutesToday);
     return json({
       users: results.map((u) => ({
         ...u,
         keys: Object.fromEntries((u.keys || '').split(',').filter(Boolean).map((s) => s.split(':'))),
         is_admin: isAdminEmail(env, u.email),
       })),
-      config: { default_limit: intOr(cfg.default_limit, DEFAULT_WORD_LIMIT), chat_daily_cap: intOr(cfg.chat_daily_cap, DEFAULT_CHAT_CAP) },
+      config: {
+        default_limit: intOr(cfg.default_limit, DEFAULT_WORD_LIMIT), chat_daily_cap: intOr(cfg.chat_daily_cap, DEFAULT_CHAT_CAP),
+        default_meeting_minutes: intOr(cfg.default_meeting_minutes, DEFAULT_MEETING_MINUTES),
+        meeting_daily_cap: intOr(cfg.meeting_daily_cap, DEFAULT_MEETING_CAP),
+      },
       keys,
       today,
+      totals,
+      daily,
+      dailySince: since,
       resets: (await env.DB.prepare(
         `SELECT r.user_id, u.email, r.requested_at, r.note FROM reset_requests r JOIN users u ON u.id = r.user_id
          ORDER BY r.requested_at DESC`
@@ -631,7 +811,7 @@ async function adminApi(request, env, session, path) {
   if (m === 'PUT' && path === '/admin/api/config') {
     const body = await readJson(request);
     const stmts = [];
-    for (const k of ['default_limit', 'chat_daily_cap']) {
+    for (const k of ['default_limit', 'chat_daily_cap', 'default_meeting_minutes', 'meeting_daily_cap']) {
       if (body[k] === undefined) continue;
       const n = Number(body[k]);
       if (!Number.isInteger(n) || n < 0 || n > 10_000_000) throw new HttpError(400, `invalid_${k}`);
@@ -671,6 +851,11 @@ async function adminApi(request, env, session, path) {
         const n = body.word_limit === null ? null : Number(body.word_limit);
         if (n !== null && (!Number.isInteger(n) || n < 0 || n > 10_000_000)) throw new HttpError(400, 'invalid_word_limit');
         sets.push('word_limit = ?'); vals.push(n);
+      }
+      if (body.meeting_limit_min !== undefined) {
+        const n = body.meeting_limit_min === null ? null : Number(body.meeting_limit_min);
+        if (n !== null && (!Number.isInteger(n) || n < 0 || n > 100_000)) throw new HttpError(400, 'invalid_meeting_limit');
+        sets.push('meeting_limit_min = ?'); vals.push(n);
       }
       if (body.limit_period !== undefined) {
         if (!['day', 'week', null].includes(body.limit_period)) throw new HttpError(400, 'invalid_limit_period');

@@ -8,6 +8,7 @@ const BASE = process.argv[2] || 'http://127.0.0.1:8789';
 const ADMIN = 'admin@example.test';
 const OWNER_GROQ = 'test-groq-owner-key-0000';     // matches dev:test vars
 const OWNER_GEMINI = 'test-gemini-owner-key-000';
+const OWNER_DEEPGRAM = 'test-deepgram-owner-key-0';
 const pw = 'correct horse battery';
 const run = Date.now();
 let passed = 0;
@@ -22,7 +23,15 @@ const upstream = http.createServer((req, res) => {
     seen.push({ path: req.url, auth: req.headers.authorization || req.headers['x-goog-api-key'], body });
     res.setHeader('content-type', 'application/json');
     res.setHeader('x-ratelimit-remaining-requests', '1999');
-    if (req.url.endsWith('/audio/transcriptions')) return res.end(JSON.stringify({ text: sttText, segments: [{ no_speech_prob: 0.01 }] }));
+    if (req.url.endsWith('/audio/transcriptions')) return res.end(JSON.stringify({ text: sttText, duration: 60, segments: [{ no_speech_prob: 0.01 }] }));
+    if (req.url.includes(':generateContent')) {
+      const audio = body.includes('inline_data');
+      return res.end(JSON.stringify({
+        candidates: [{ content: { parts: [{ text: '[00:01] Speaker 1: haan theek hai' }] } }],
+        usageMetadata: { promptTokenCount: 2000, promptTokensDetails: audio ? [{ modality: 'TEXT', tokenCount: 80 }, { modality: 'AUDIO', tokenCount: 1920 }] : [{ modality: 'TEXT', tokenCount: 80 }] },
+      }));
+    }
+    if (req.url.startsWith('/v1/listen')) return res.end(JSON.stringify({ metadata: { duration: 120 }, results: { utterances: [{ speaker: 0, start: 1, transcript: 'हाँ ठीक है' }] } }));
     if (req.url.endsWith('/chat/completions')) return res.end(JSON.stringify({ choices: [{ message: { content: 'Clean text.' } }], usage: { total_tokens: 50 } }));
     if (req.url.endsWith('/interactions')) return res.end(JSON.stringify({ status: 'completed', output_text: 'gemini heard six words here' }));
     res.statusCode = 404; res.end('{}');
@@ -236,6 +245,158 @@ try {
     assert.equal((await call('/me', { method: 'GET', token: b })).status, 401, 'other devices signed out');
     assert.equal((await call('/auth/login', { body: { email: userEmail, password: 'my new password 1' } })).status, 200);
     assert.equal((await call('/auth/login', { body: { email: userEmail, password: tempPw } })).status, 401);
+  });
+  await step('overview has service-wide totals and a 30-day daily series', async () => {
+    const r = await call('/admin/api/overview', { method: 'GET', token: tokenAdmin, headers: at(nextWeek) });
+    assert.equal(r.status, 200);
+    const t = r.body.totals;
+    assert.ok(t.users >= 2);
+    assert.ok(t.allowanceToday >= 2000, 'every active daily-limit user adds their limit');
+    assert.ok(t.leftToday <= t.allowanceToday);
+    assert.ok(t.wordsWeek >= t.wordsToday);
+    const day = r.body.daily.find((d) => d.day === '2026-11-24');
+    assert.ok(day && day.words >= 5 && day.stt >= 1, 'usage on that India day is in the series');
+    assert.ok(r.body.daily.every((d) => d.day >= r.body.dailySince));
+  });
+  // ---------- meeting recorder ----------
+  const meetEmail = `meet-${run}@example.test`;
+  const tokenM = await register(meetEmail);
+  const mday = day1 + 20 * 864e5;                       // Tue 8 Dec 2026: a fresh India day
+  const meetH = { ...at(mday), 'x-whisperash-purpose': 'meeting' };
+  const geminiAudio = { contents: [{ role: 'user', parts: [{ text: 'transcribe' }, { inline_data: { mime_type: 'audio/webm', data: 'AAAA' } }] }] };
+  let meetId;
+  await step('/me shows the default meeting allowance: 120 minutes a day', async () => {
+    const r = await call('/me', { method: 'GET', token: tokenM, headers: at(mday) });
+    assert.equal(r.body.plan.meetingLimitMin, 120);
+    assert.equal(r.body.plan.meetingUsedMin, 0);
+    meetId = r.body.user.id;
+  });
+  await step('meeting: Gemini generateContent uses the owner key and counts audio minutes, not words', async () => {
+    const r = await call('/gemini/v1beta/models/gemini-3.5-flash:generateContent', { token: tokenM, headers: at(mday), body: geminiAudio });
+    assert.equal(r.status, 200, r.text);
+    assert.match(r.body.candidates[0].content.parts[0].text, /Speaker 1/);
+    assert.equal(seen.at(-1).path, '/v1beta/models/gemini-3.5-flash:generateContent');
+    assert.equal(seen.at(-1).auth, OWNER_GEMINI);
+    assert.equal(r.headers.get('x-whisperash-meeting-left-min'), '120');
+    const me = await call('/me', { method: 'GET', token: tokenM, headers: at(mday) });
+    assert.equal(me.body.plan.meetingSeconds, 60);           // 1,920 audio tokens / 32
+    assert.equal(me.body.plan.used, 0, 'meeting text is not dictation words');
+  });
+  await step('meeting: a text-only Gemini call (summary) counts no minutes', async () => {
+    const r = await call('/gemini/v1beta/models/gemini-3.5-flash-lite:generateContent', { token: tokenM, headers: at(mday), body: { contents: [{ role: 'user', parts: [{ text: 'summarise' }] }] } });
+    assert.equal(r.status, 200, r.text);
+    const me = await call('/me', { method: 'GET', token: tokenM, headers: at(mday) });
+    assert.equal(me.body.plan.meetingSeconds, 60);
+    assert.equal(me.body.plan.meetingRequests, 2);
+  });
+  await step('meeting: other Gemini models are refused', async () => {
+    const r = await call('/gemini/v1beta/models/gemini-9-ultra:generateContent', { token: tokenM, headers: at(mday), body: geminiAudio });
+    assert.equal(r.status, 400);
+    assert.equal(r.body.error.code, 'model_not_allowed');
+  });
+  await step('meeting: Deepgram gets the audio with the owner key; only known options pass', async () => {
+    const r = await call('/deepgram/v1/listen?model=nova-3&language=multi&diarize=true&utterances=true&callback=https://evil.example', {
+      token: tokenM, headers: { ...at(mday), 'content-type': 'audio/webm' }, raw: new Uint8Array(4000),
+    });
+    assert.equal(r.status, 200, r.text);
+    assert.equal(r.body.results.utterances[0].speaker, 0);
+    const u = new URL('http://x' + seen.at(-1).path);
+    assert.equal(u.pathname, '/v1/listen');
+    assert.equal(u.searchParams.get('model'), 'nova-3');
+    assert.equal(u.searchParams.get('diarize'), 'true');
+    assert.equal(u.searchParams.get('callback'), null, 'unknown options are dropped');
+    assert.equal(seen.at(-1).auth, `Token ${OWNER_DEEPGRAM}`);
+    const me = await call('/me', { method: 'GET', token: tokenM, headers: at(mday) });
+    assert.equal(me.body.plan.meetingSeconds, 180);
+  });
+  await step('meeting: Groq Whisper with the meeting header counts minutes, not words', async () => {
+    const r = await stt(tokenM, meetH);
+    assert.equal(r.status, 200, r.text);
+    const me = await call('/me', { method: 'GET', token: tokenM, headers: at(mday) });
+    assert.equal(me.body.plan.meetingSeconds, 240);
+    assert.equal(me.body.plan.meetingUsedMin, 4);
+    assert.equal(me.body.plan.used, 0);
+  });
+  await step('meeting chat calls skip the dictation cleanup cap', async () => {
+    await call('/admin/api/config', { method: 'PUT', token: tokenAdmin, body: { chat_daily_cap: 0 } });
+    const chat = { model: 'openai/gpt-oss-120b', messages: [{ role: 'user', content: 'romanize' }] };
+    const m = await call('/groq/openai/v1/chat/completions', { token: tokenM, headers: meetH, body: chat });
+    assert.equal(m.status, 200, m.text);
+    const d = await call('/groq/openai/v1/chat/completions', { token: tokenM, headers: at(mday), body: chat });
+    assert.equal(d.status, 429);
+    assert.equal(d.body.error.code, 'chat_limit');
+    await call('/admin/api/config', { method: 'PUT', token: tokenAdmin, body: { chat_daily_cap: 300 } });
+  });
+  await step('meeting minutes limit: 429 meeting_limit, dictation unaffected, resets next India day', async () => {
+    assert.equal((await call(`/admin/api/users/${meetId}`, { method: 'PATCH', token: tokenAdmin, body: { meeting_limit_min: 4 } })).status, 200);
+    const r = await call('/gemini/v1beta/models/gemini-3.5-flash:generateContent', { token: tokenM, headers: at(mday), body: geminiAudio });
+    assert.equal(r.status, 429);
+    assert.equal(r.body.error.code, 'meeting_limit');
+    assert.match(r.body.error.message, /4 meeting minutes/);
+    assert.equal((await stt(tokenM, meetH)).status, 429);
+    assert.equal((await stt(tokenM, at(mday))).status, 200, 'dictation still works');
+    const next = await call('/gemini/v1beta/models/gemini-3.5-flash:generateContent', { token: tokenM, headers: at(mday + 864e5), body: geminiAudio });
+    assert.equal(next.status, 200, next.text);
+    await call(`/admin/api/users/${meetId}`, { method: 'PATCH', token: tokenAdmin, body: { meeting_limit_min: null } });
+  });
+  await step('meeting call cap and default minutes come from the dashboard config', async () => {
+    await call('/admin/api/config', { method: 'PUT', token: tokenAdmin, body: { default_meeting_minutes: 30, meeting_daily_cap: 1 } });
+    const me = await call('/me', { method: 'GET', token: tokenM, headers: at(mday + 864e5) });
+    assert.equal(me.body.plan.meetingLimitMin, 30);
+    const r = await call('/deepgram/v1/listen?model=nova-3', { token: tokenM, headers: { ...at(mday + 864e5), 'content-type': 'audio/webm' }, raw: new Uint8Array(10) });
+    assert.equal(r.status, 429, 'one call a day already used');
+    await call('/admin/api/config', { method: 'PUT', token: tokenAdmin, body: { default_meeting_minutes: 120, meeting_daily_cap: 150 } });
+  });
+  await step('a Deepgram key saved in the dashboard is used and never shown', async () => {
+    const def = 'dg_dashboard_default_key_abcdefgh1234';
+    assert.equal((await call('/admin/api/keys', { method: 'PUT', token: tokenAdmin, body: { provider: 'deepgram', key: def } })).status, 200);
+    await call('/deepgram/v1/listen?model=nova-3', { token: tokenM, headers: { ...at(mday + 2 * 864e5), 'content-type': 'audio/webm' }, raw: new Uint8Array(10) });
+    assert.equal(seen.at(-1).auth, `Token ${def}`);
+    const ov = await call('/admin/api/overview', { method: 'GET', token: tokenAdmin });
+    assert.equal(ov.body.keys.deepgram.source, 'dashboard');
+    assert.ok(!ov.text.includes(def) && !ov.text.includes(OWNER_DEEPGRAM));
+    await call('/admin/api/keys', { method: 'PUT', token: tokenAdmin, body: { provider: 'deepgram', key: null } });
+  });
+  await step('overview shows meeting minutes per user, per day and in total', async () => {
+    const r = await call('/admin/api/overview', { method: 'GET', token: tokenAdmin, headers: at(mday) });
+    const u = r.body.users.find((x) => x.email === meetEmail);
+    assert.equal(u.meeting_seconds_today, 240);
+    assert.equal(u.meeting_limit_min, null);
+    assert.ok(r.body.totals.meetingMinutesToday >= 4);
+    assert.equal(r.body.config.default_meeting_minutes, 120);
+    assert.ok(r.body.daily.find((d) => d.day === '2026-12-08').meeting_seconds >= 240);
+  });
+  await step('sync: meetings up to 512 KB are kept; other kinds stay at 64 KB', async () => {
+    const big = 'x'.repeat(300 * 1024);
+    const item = { kind: 'meetings', id: 'm1', updated_at: Date.now(), data: { title: 'Weekly', summary: 'Summary:', transcript: big, engine: 'gemini', durationMs: 1, createdMs: 1, status: 'done' } };
+    const ok = await call('/sync/push', { token: tokenM, body: { items: [item] } });
+    assert.equal(ok.status, 200, ok.text);
+    assert.equal(ok.body.applied, 1);
+    const tooBig = await call('/sync/push', { token: tokenM, body: { items: [{ ...item, id: 'm2', data: { transcript: 'x'.repeat(600 * 1024) } }] } });
+    assert.equal(tooBig.status, 400);
+    assert.equal(tooBig.body.error, 'item_too_large');
+    const note = await call('/sync/push', { token: tokenM, body: { items: [{ kind: 'notes', id: 'n1', updated_at: Date.now(), data: { body: big } }] } });
+    assert.equal(note.body.error, 'item_too_large');
+    const pull = await call('/sync/pull', { token: tokenM, body: { cursor: {} } });
+    const m = pull.body.items.find((x) => x.kind === 'meetings' && x.id === 'm1');
+    assert.equal(m.data.transcript.length, big.length);
+  });
+  await step('history re-transcribe (purpose dictation) counts words, not meeting minutes', async () => {
+    const t = mday + 3 * 864e5;
+    const r = await call('/gemini/v1beta/models/gemini-3.5-flash:generateContent', {
+      token: tokenM, headers: { ...at(t), 'x-whisperash-purpose': 'dictation' }, body: geminiAudio,
+    });
+    assert.equal(r.status, 200, r.text);
+    const me = await call('/me', { method: 'GET', token: tokenM, headers: at(t) });
+    assert.equal(me.body.plan.meetingSeconds, 0);
+    assert.equal(me.body.plan.used, 6);                       // "[00:01] Speaker 1: haan theek hai"
+  });
+  await step('sync: note folders (Samsung Notes style) push and pull', async () => {
+    const f = { kind: 'folders', id: 'f1', updated_at: Date.now(), data: { name: 'Work', parentId: null, color: 'peach' } };
+    const ok = await call('/sync/push', { token: tokenM, body: { items: [f] } });
+    assert.equal(ok.status, 200, ok.text);
+    const pull = await call('/sync/pull', { token: tokenM, body: { cursor: {} } });
+    assert.equal(pull.body.items.find((x) => x.kind === 'folders' && x.id === 'f1').data.name, 'Work');
   });
   await step('admin page is served with a strict content security policy', async () => {
     const r = await fetch(BASE + '/admin');
