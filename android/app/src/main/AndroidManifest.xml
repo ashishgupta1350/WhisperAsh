@@ -5,6 +5,14 @@
     <uses-permission android:name="android.permission.INTERNET" />
     <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
     <uses-permission android:name="android.permission.VIBRATE" />
+    <!-- Meeting recorder: keeps recording with the screen off, then makes the transcript. -->
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_MICROPHONE" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_DATA_SYNC" />
+    <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
+    <uses-permission android:name="android.permission.WAKE_LOCK" />
+    <!-- Locked notes open with the phone's fingerprint or screen lock. -->
+    <uses-permission android:name="android.permission.USE_BIOMETRIC" />
 
     <application
         android:name=".WhisperAshApp"
@@ -17,6 +25,7 @@
 
         <activity
             android:name=".MainActivity"
+            android:theme="@style/Theme.WhisperAsh.Glass"
             android:exported="true"
             android:windowSoftInputMode="adjustResize">
             <intent-filter>
@@ -24,6 +33,23 @@
                 <category android:name="android.intent.category.LAUNCHER" />
             </intent-filter>
         </activity>
+
+        <receiver
+            android:name=".QuickNoteWidget"
+            android:exported="false"
+            android:label="@string/widget_name">
+            <intent-filter>
+                <action android:name="android.appwidget.action.APPWIDGET_UPDATE" />
+            </intent-filter>
+            <meta-data
+                android:name="android.appwidget.provider"
+                android:resource="@xml/widget_quick_note" />
+        </receiver>
+
+        <service
+            android:name=".MeetingRecorderService"
+            android:exported="false"
+            android:foregroundServiceType="microphone|dataSync" />
 
         <service
             android:name=".ime.WhisperAshIme"

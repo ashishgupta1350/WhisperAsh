@@ -3,4 +3,8 @@
     <string name="app_name">WhisperAsh</string>
     <string name="ime_name">WhisperAsh voice keyboard</string>
     <string name="ime_subtype">English, Hindi, Hinglish</string>
+    <string name="widget_name">WhisperAsh quick note</string>
+    <string name="widget_description">Speak or type a note from the home screen</string>
+    <string name="widget_speak">Speak a note</string>
+    <string name="widget_type">Type</string>
 </resources>

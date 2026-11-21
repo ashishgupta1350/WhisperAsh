@@ -5,4 +5,12 @@
         <item name="android:statusBarColor">#FF101014</item>
         <item name="android:navigationBarColor">#FF101014</item>
     </style>
+
+    <!-- The app's screens: light glass (the keyboard keeps Theme.WhisperAsh). Light start window, no dark flash. -->
+    <style name="Theme.WhisperAsh.Glass" parent="android:Theme.Material.Light.NoActionBar">
+        <item name="android:windowBackground">#FFEEF3F0</item>
+        <item name="android:statusBarColor">@android:color/transparent</item>
+        <item name="android:navigationBarColor">@android:color/transparent</item>
+        <item name="android:windowLightStatusBar">true</item>
+    </style>
 </resources>

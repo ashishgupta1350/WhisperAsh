@@ -71,6 +71,7 @@ class SecureStore(context: Context) {
         private const val ALIAS = "whisperash_secrets_v1"
         const val GROQ_KEY = "groq_api_key"
         const val GEMINI_KEY = "gemini_api_key"
+        const val DEEPGRAM_KEY = "deepgram_api_key"
         const val SYNC_TOKEN = "sync_token"
     }
 }

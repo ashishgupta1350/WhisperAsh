@@ -131,6 +131,32 @@ class Settings(context: Context) {
     var notesUnsupportedAt: Long
         get() = prefs.getLong("notes_unsupported_at", 0)
         set(v) = prefs.edit().putLong("notes_unsupported_at", v).apply()
+    /** Same as [notesUnsupportedAt], for folders (the server needs the "folders" kind). */
+    var foldersUnsupportedAt: Long
+        get() = prefs.getLong("folders_unsupported_at", 0)
+        set(v) = prefs.edit().putLong("folders_unsupported_at", v).apply()
+    /** Notes screen: Grid / List / Simple list, sort, and "Group by date" (Samsung Notes' view options). */
+    var notesLayout: String
+        get() = prefs.getString("notes_layout", "Grid") ?: "Grid"
+        set(v) = prefs.edit().putString("notes_layout", v).apply()
+    var notesSort: String
+        get() = prefs.getString("notes_sort", "Modified") ?: "Modified"
+        set(v) = prefs.edit().putString("notes_sort", v).apply()
+    var notesGroupByDate: Boolean
+        get() = prefs.getBoolean("notes_group_by_date", false)
+        set(v) = prefs.edit().putBoolean("notes_group_by_date", v).apply()
+    /** Same as [notesUnsupportedAt], for meetings. */
+    var meetingsUnsupportedAt: Long
+        get() = prefs.getLong("meetings_unsupported_at", 0)
+        set(v) = prefs.edit().putLong("meetings_unsupported_at", v).apply()
+    /** Android 13+: the notification permission is asked once, on the first meeting recording. */
+    var askedNotifications: Boolean
+        get() = prefs.getBoolean("asked_notifications", false)
+        set(v) = prefs.edit().putBoolean("asked_notifications", v).apply()
+    /** The Home "Finish setting up" card was closed; Settings then offers "Setup checklist" to bring it back. */
+    var setupDismissed: Boolean
+        get() = prefs.getBoolean("setup_dismissed", false)
+        set(v) = prefs.edit().putBoolean("setup_dismissed", v).apply()
     var lastSyncError: String
         get() = prefs.getString("last_sync_error", "") ?: ""
         set(v) = prefs.edit().putString("last_sync_error", v).apply()

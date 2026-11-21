@@ -570,7 +570,7 @@ class WhisperAshIme : InputMethodService() {
         job = app.scope.launch {
             try {
                 val rec = source()
-                val result = app.engine.process(rec, pkg, stopAt) { stage ->
+                val result = app.engine.process(rec, pkg, stopAt, keepAudio = true) { stage ->
                     main.post { if (state == State.PROCESSING) status.text = stage }
                 }
                 val insertedAt = withContext(Dispatchers.Main) {

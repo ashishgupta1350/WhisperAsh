@@ -13,6 +13,8 @@ data class DictationResult(
     val cleanupModel: String?,
     val timings: JSONObject,
     val note: String? = null,
+    /** The kept recording (filesDir/recordings) when process(keepAudio = true) succeeded. */
+    val audioPath: String? = null,
 )
 
 class NoSpeechException : Exception("No speech heard")
@@ -23,7 +25,10 @@ class NoSpeechException : Exception("No speech heard")
  */
 class DictationEngine(private val app: WhisperAshApp) {
 
-    fun process(rec: Recording, targetPkg: String?, stopAt: Long, cleanupModelOverride: String? = null, sttOverride: String? = null, skipCleanup: Boolean = false, onStage: (String) -> Unit = {}): DictationResult {
+    fun process(
+        rec: Recording, targetPkg: String?, stopAt: Long, cleanupModelOverride: String? = null, sttOverride: String? = null,
+        skipCleanup: Boolean = false, keepAudio: Boolean = false, onStage: (String) -> Unit = {},
+    ): DictationResult {
         val s = app.settings
         val t = JSONObject()
         val audioSec = rec.durationMs / 1000.0
@@ -142,9 +147,11 @@ class DictationEngine(private val app: WhisperAshApp) {
                 t.put("cleanup_skipped", true)
             }
             t.put("total_ms", System.currentTimeMillis() - stopAt)
-            return DictationResult(text, raw, stt.provider, stt.model, cleanupModel, t, note)
+            // Keep the recording (last 15 are kept, linked from History) so it can be played or redone later.
+            val kept = if (keepAudio) RecordingStore.keep(app.filesDir, rec.file) else null
+            return DictationResult(text, raw, stt.provider, stt.model, cleanupModel, t, note, kept)
         } finally {
-            rec.file.delete()
+            rec.file.delete()   // no-op when it was kept (moved)
         }
     }
 
@@ -251,10 +258,12 @@ class DictationEngine(private val app: WhisperAshApp) {
         if (result.text.isNotBlank()) {
             app.db.addHistory(
                 result.text, result.rawText, result.provider,
-                listOfNotNull(result.sttModel, result.cleanupModel).joinToString(" + "), audioMs, targetPkg,
+                listOfNotNull(result.sttModel, result.cleanupModel).joinToString(" + "), audioMs, targetPkg, result.audioPath,
             )
             app.sync.requestSync(SyncClient.Reason.CHANGE)
         }
+        // Only the last RecordingStore.KEEP dictations keep their recording.
+        try { RecordingStore.prune(app.db, app.filesDir) } catch (e: Exception) { Log.w(TAG, "Pruning recordings failed: ${e.message}") }
     }
 
     companion object {

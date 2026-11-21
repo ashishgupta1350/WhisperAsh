@@ -4,6 +4,7 @@ import android.app.Application
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.launch
 import okhttp3.OkHttpClient
 import java.util.concurrent.TimeUnit
 
@@ -37,6 +38,14 @@ class WhisperAshApp : Application() {
         engine = DictationEngine(this)
         notes = NoteMaker(this)
         settings.onSyncedChange = { sync.requestSync(SyncClient.Reason.CHANGE) }
+        // A new process means no meeting recorder is running: meetings a killed app left mid-way are failed.
+        // Done before anything else can start a recording, so a new one is never caught by it.
+        try { db.failUnfinishedMeetings() } catch (_: Exception) {}
+        // Recycle bin keeps notes 15 days; only the last 15 dictations keep their recording.
+        scope.launch {
+            try { db.purgeBin() } catch (_: Exception) {}
+            try { RecordingStore.prune(db, filesDir) } catch (_: Exception) {}
+        }
     }
 
     /**
@@ -67,6 +76,26 @@ class WhisperAshApp : Application() {
 
     /** Ready to dictate: signed in (account mode) or an own key saved. */
     fun canDictate(): Boolean = groqTarget() != null || geminiTarget() != null
+
+    /**
+     * Meeting recorder, per provider: this phone's own key for it first (direct), else the WhisperAsh
+     * account (meeting-minutes limit), else none. Not tied to [useAccount], which is for dictation.
+     */
+    fun meetingTarget(provider: String): ApiTarget? {
+        val own = when (provider) {
+            MeetingRoutes.GEMINI -> SecureStore.GEMINI_KEY
+            MeetingRoutes.DEEPGRAM -> SecureStore.DEEPGRAM_KEY
+            else -> SecureStore.GROQ_KEY
+        }
+        val token = if (sync.signedIn) secure.get(SecureStore.SYNC_TOKEN) else null
+        return MeetingRoutes.pick(provider, secure.get(own), token, settings.serverUrl)
+    }
+
+    fun deepgramTarget(): ApiTarget? = meetingTarget(MeetingRoutes.DEEPGRAM)
+
+    fun canRecordMeetings(): Boolean =
+        listOf(MeetingRoutes.GEMINI, MeetingRoutes.DEEPGRAM, MeetingRoutes.GROQ).any { meetingTarget(it) != null }
+
 
     companion object {
         lateinit var instance: WhisperAshApp

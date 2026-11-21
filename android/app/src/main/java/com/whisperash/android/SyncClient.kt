@@ -21,6 +21,8 @@ import java.io.IOException
 data class AccountPlan(
     val limit: Int, val used: Int, val left: Int, val period: String, val resetsAt: Long,
     val status: String, val ownGroqKey: Boolean,
+    /** Meeting recorder minutes on the owner's keys, IST day; -1 = the server did not say. */
+    val meetingLimitMin: Int = -1, val meetingUsedMin: Int = -1, val meetingLeftMin: Int = -1,
 ) {
     val periodWord get() = if (period == "week") "this week" else "today"
     /** "1,240 of 2,000 words left today" / "No limit: your own key" / "Paused by the admin". */
@@ -28,6 +30,20 @@ data class AccountPlan(
         status == "blocked" -> "Your account is paused. Contact the WhisperAsh admin."
         ownGroqKey -> "No word limit: your account uses a key the admin set for you."
         else -> "%,d of %,d words left %s".format(left, limit, periodWord)
+    }
+
+    /** "87 min left today" for small spaces (Home's Meetings card), or null when the server sent no limit. */
+    fun meetingShort(): String? = when {
+        status == "blocked" -> "Account paused"
+        meetingLimitMin < 0 || meetingLeftMin < 0 -> null
+        else -> "%,d min left today".format(meetingLeftMin)
+    }
+
+    /** "87 of 120 meeting minutes left today", or null when the server sent no meeting limit. */
+    fun meetingSummary(): String? = when {
+        status == "blocked" -> "Your account is paused. Contact the WhisperAsh admin."
+        meetingLimitMin < 0 || meetingLeftMin < 0 -> null
+        else -> "%,d of %,d meeting minutes left today".format(meetingLeftMin, meetingLimitMin)
     }
 }
 
@@ -65,7 +81,7 @@ class SyncClient(
 
     private fun snapshot(busy: Boolean) = SyncState(
         signedIn, settings.email, busy, settings.lastSyncAt, settings.lastSyncError,
-        try { db.dirtyCount() + db.dirtyNoteCount() + if (settings.settingsDirty) 1 else 0 } catch (_: Exception) { 0 },
+        try { db.dirtyCount() + db.dirtyNoteCount() + db.dirtyMeetingCount() + if (settings.settingsDirty) 1 else 0 } catch (_: Exception) { 0 },
     )
 
     fun refreshState() { _state.value = snapshot(_state.value.busy) }
@@ -109,6 +125,7 @@ class SyncClient(
                     p.optInt("limit"), p.optInt("used"), p.optInt("left"), p.optString("period", "day"),
                     p.optLong("resetsAt"), p.optString("status", "active"),
                     p.optJSONObject("ownKeys")?.optBoolean("groq") == true,
+                    p.optInt("meetingLimitMin", -1), p.optInt("meetingUsedMin", -1), p.optInt("meetingLeftMin", -1),
                 ).also { lastPlan = it }
             }
         } catch (_: Exception) {
@@ -183,7 +200,9 @@ class SyncClient(
         _state.value = snapshot(true)
         try {
             push()
+            pushFolders(force = reason == Reason.MANUAL || reason == Reason.LOGIN)
             pushNotes(force = reason == Reason.MANUAL || reason == Reason.LOGIN)
+            pushMeetings(force = reason == Reason.MANUAL || reason == Reason.LOGIN)
             pull()
             settings.lastSyncAt = System.currentTimeMillis()
             settings.lastSyncError = ""
@@ -224,6 +243,32 @@ class SyncClient(
         }
     }
 
+    /** Folders go alone too: the server needs the "folders" kind; until then they stay on this phone (400 → retry in 6 h). */
+    private fun pushFolders(force: Boolean = false) {
+        if (!force && System.currentTimeMillis() - settings.foldersUnsupportedAt < 6 * 3_600_000L) return
+        while (true) {
+            val rows = db.dirtyFolders(PUSH_BATCH)
+            if (rows.isEmpty()) return
+            val items = JSONArray()
+            for (r in rows) items.put(
+                JSONObject().put("kind", r.kind).put("id", r.id).put("updated_at", r.updatedAt)
+                    .put("deleted", r.deleted).put("data", r.data)
+            )
+            try {
+                request("/sync/push", JSONObject().put("items", items))
+            } catch (e: HttpError) {
+                if (e.status == 400) {
+                    settings.foldersUnsupportedAt = System.currentTimeMillis()
+                    Log.w(TAG, "sync server does not take folders yet; kept on this phone")
+                    return
+                }
+                throw e
+            }
+            settings.foldersUnsupportedAt = 0
+            db.markFoldersClean(rows)
+        }
+    }
+
     /**
      * Notes go in their own upload: a sync server that does not know the "notes" kind yet answers 400,
      * which must never block history / dictionary sync. The notes then wait on the phone and are retried
@@ -254,6 +299,50 @@ class SyncClient(
         }
     }
 
+    /** Meetings, like notes, go in their own upload so an older server's 400 never blocks the rest. Few per call: each can be ~500 KB. */
+    private fun pushMeetings(force: Boolean = false) {
+        if (!force && System.currentTimeMillis() - settings.meetingsUnsupportedAt < 6 * 3_600_000L) return
+        while (true) {
+            val rows = db.dirtyMeetings(MEETING_BATCH)
+            if (rows.isEmpty()) return
+            val items = JSONArray()
+            for (r in rows) items.put(
+                JSONObject().put("kind", r.kind).put("id", r.id).put("updated_at", r.updatedAt)
+                    .put("deleted", r.deleted).put("data", r.data)
+            )
+            try {
+                request("/sync/push", JSONObject().put("items", items))
+            } catch (e: HttpError) {
+                if (e.status == 400 && e.message == "item_too_large") {
+                    // One meeting is over the server's 512 KB: send the others alone, keep that one on this
+                    // phone only (no endless retries; it is offered again if it changes).
+                    for (r in rows) {
+                        val one = JSONArray().put(
+                            JSONObject().put("kind", r.kind).put("id", r.id).put("updated_at", r.updatedAt)
+                                .put("deleted", r.deleted).put("data", r.data)
+                        )
+                        try {
+                            request("/sync/push", JSONObject().put("items", one))
+                        } catch (e1: HttpError) {
+                            if (e1.status != 400 || e1.message != "item_too_large") throw e1
+                            Log.w(TAG, "meeting ${r.id} is too large to sync; kept on this phone")
+                        }
+                        db.markMeetingsClean(listOf(r))
+                    }
+                    continue
+                }
+                if (e.status == 400) {
+                    settings.meetingsUnsupportedAt = System.currentTimeMillis()
+                    Log.w(TAG, "sync server does not take meetings yet; kept on this phone")
+                    return
+                }
+                throw e
+            }
+            settings.meetingsUnsupportedAt = 0
+            db.markMeetingsClean(rows)
+        }
+    }
+
     private fun pull() {
         var cursor: JSONObject? = settings.cursorJson?.let { try { JSONObject(it) } catch (_: Exception) { null } }
         var changed = false
@@ -273,6 +362,10 @@ class SyncClient(
                     if (applySettings(ts, deleted, data)) changed = true
                 } else if (kind == "notes") {
                     if (db.applyRemoteNote(id, ts, deleted, data)) changed = true
+                } else if (kind == "folders") {
+                    if (db.applyRemoteFolder(id, ts, deleted, data)) changed = true
+                } else if (kind == "meetings") {
+                    if (db.applyRemoteMeeting(id, ts, deleted, data)) changed = true
                 } else if (db.applyRemote(kind, id, ts, deleted, data)) changed = true
             }
             cursor = page.optJSONObject("cursor")
@@ -311,6 +404,7 @@ class SyncClient(
     companion object {
         const val TAG = "WhisperAshSync"
         const val PUSH_BATCH = 200
+        const val MEETING_BATCH = 4
         const val PULL_OVERLAP_MS = 10_000L
     }
 }
