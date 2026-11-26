@@ -27,3 +27,46 @@ test("phone notes preserve metadata and Windows edits and deletes become sync re
   assert.equal(store.dirty(owner, 10)[0].deleted, 1);
   db.close();
 });
+
+test("Windows backfills phone notes and meetings before reusing an old sync cursor", async (t) => {
+  const Module = require("node:module");
+  const load = Module._load;
+  const mocked = t.mock.method(Module, "_load", function (name, ...args) {
+    if (name === "electron") return { BrowserWindow: { getAllWindows: () => [] } };
+    return load.call(this, name, ...args);
+  });
+  let Sync;
+  try {
+    Sync = require("../../src/helpers/whisperashSync");
+  } finally {
+    mocked.mock.restore();
+  }
+
+  const received = [];
+  const cursors = [];
+  let savedConfig;
+  const last = { ts: 120_000, kind: "meetings", id: "phone-meeting" };
+  const notes = [{ kind: "notes" }];
+  const meetings = [{ kind: "meetings" }];
+  const sync = Object.assign(Object.create(Sync.prototype), {
+    config: { userId: "owner-a", settingsPulledFor: "owner-a", cursor: { ts: 90_000 } },
+    _request: async (_, { body }) => {
+      cursors.push(body.cursor);
+      if (cursors.length === 1) return { items: notes, more: true, cursor: { ts: 50_000 } };
+      if (cursors.length === 2) return { items: meetings, more: false, cursor: last };
+      return { items: [], more: false, cursor: last };
+    },
+    _applyRemote: (item) => { received.push(item.kind); return item.kind; },
+    _writeConfig() { savedConfig = { ...this.config }; },
+  });
+
+  await sync._pull();
+  assert.deepEqual(cursors, [null, { ts: 50_000 }]);
+  assert.deepEqual(received, ["notes", "meetings"]);
+  assert.deepEqual(savedConfig.cursor, { ts: 110_000, kind: "", id: "" });
+
+  // Reopening the app after a successful backfill should resume incremental sync.
+  sync.config = savedConfig;
+  await sync._pull();
+  assert.deepEqual(cursors[2], { ts: 110_000, kind: "", id: "" });
+});

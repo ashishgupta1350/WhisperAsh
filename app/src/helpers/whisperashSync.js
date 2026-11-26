@@ -24,6 +24,7 @@ const SYNC_INTERVAL_MS = 3 * 60 * 1000;
 const DEBOUNCE_MS = 4000;
 const PUSH_BATCH = 200;
 const PULL_OVERLAP_MS = 10 * 1000;
+const PULL_VERSION = 1;
 const REQUEST_TIMEOUT_MS = 20000;
 const HISTORY_SCAN_LIMIT = 5000;
 
@@ -563,7 +564,8 @@ class WhisperAshSync {
   }
 
   async _pull() {
-    let cursor = this.config.cursor || null;
+    // Older Windows builds advanced the cursor before they could store notes and all meeting records.
+    let cursor = this.config.pullVersion === PULL_VERSION ? this.config.cursor || null : null;
     let changedHistory = false;
     let changedDictionary = false;
     let changedNotes = false;
@@ -582,6 +584,7 @@ class WhisperAshSync {
     }
     // Re-read the last few seconds next time, in case a write landed mid-pull.
     this.config.cursor = cursor ? { ts: Math.max(0, cursor.ts - PULL_OVERLAP_MS), kind: "", id: "" } : null;
+    this.config.pullVersion = PULL_VERSION;
     const firstPull = this.config.settingsPulledFor !== this.config.userId;
     this.config.settingsPulledFor = this.config.userId;
     this._writeConfig();
