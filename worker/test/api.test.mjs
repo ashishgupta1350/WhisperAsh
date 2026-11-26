@@ -130,6 +130,30 @@ await step('notes push and pull (Android Notes tab)', async () => {
   assert.equal(got.data.title, 'Groceries');
   assert.equal(got.data.body, '- milk\n- eggs');
 });
+await step('diaries sync independently of meetings and accept an edit from the other client', async () => {
+  const id = 'diary-1';
+  const diary = { title: '21 Nov 2026 · A busy day', summary: 'I met a friend.',
+    transcript: 'A diary entry. '.repeat(6000), engine: 'gemini', createdMs: 6000, status: 'done' };
+  const push = (token, item) => call('/sync/push', { token, body: { items: [item] } });
+  const find = async (token, kind) => {
+    let cursor = null;
+    for (;;) {
+      const page = await call('/sync/pull', { token, body: { cursor } });
+      assert.equal(page.status, 200);
+      const row = page.body.items.find((item) => item.kind === kind && item.id === id);
+      if (row || !page.body.more) return row;
+      cursor = page.body.cursor;
+    }
+  };
+  assert.equal((await push(tokenA, { kind: 'diaries', id, updated_at: 6000, data: diary })).status, 200);
+  assert.deepEqual((await find(tokenB, 'diaries')).data, diary);
+  assert.equal(await find(tokenB, 'meetings'), undefined);
+  const edited = { ...diary, title: '21 Nov 2026 · Meeting a friend' };
+  assert.equal((await push(tokenB, { kind: 'diaries', id, updated_at: 6001, data: edited })).status, 200);
+  assert.equal((await find(tokenA, 'diaries')).data.title, edited.title);
+  assert.equal((await push(tokenA, { kind: 'diaries', id, updated_at: 6002, deleted: true })).status, 200);
+  assert.equal((await find(tokenB, 'diaries')).deleted, true);
+});
 await step('other users cannot see this data', async () => {
   const r0 = await call('/auth/register', { body: { email: 'other-' + email, password, signupCode } });
   const r = await call('/sync/pull', { token: r0.body.token, body: { cursor: null } });

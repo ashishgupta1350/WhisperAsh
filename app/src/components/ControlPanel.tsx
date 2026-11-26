@@ -133,6 +133,7 @@ const PersonalNotesView = React.lazy(() => import("./notes/PersonalNotesView"));
 const InsightsView = React.lazy(() => import("./InsightsView"));
 const DictionaryView = React.lazy(() => import("./DictionaryView"));
 const WhisperAshMeetings = React.lazy(() => import("./WhisperAshMeetings"));
+const WhisperAshNotes = React.lazy(() => import("./WhisperAshNotes"));
 const UploadAudioView = React.lazy(() => import("./notes/UploadAudioView"));
 const IntegrationsView = React.lazy(() => import("./IntegrationsView"));
 const ChatView = React.lazy(() => import("./chat/ChatView"));
@@ -318,14 +319,14 @@ export default function ControlPanel({ initialSettingsSection }: ControlPanelPro
   }, []);
   // After Stop, main opens the dashboard on that meeting; the page shows progress until the
   // summary and transcript are ready.
-  const [openMeetingId, setOpenMeetingId] = useState<{ id: string } | null>(null);
+  const [openMeetingId, setOpenMeetingId] = useState<{ id: string; kind?: "meetings" | "diaries" } | null>(null);
   useEffect(() => {
     const bridge = window.whisperash;
     if (!bridge?.onMeetingOpen) return;
-    return bridge.onMeetingOpen(({ id }) => {
+    return bridge.onMeetingOpen(({ id, kind }) => {
       setShowSettings(false);
-      setActiveView("meetings");
-      setOpenMeetingId({ id });
+      setActiveView(kind === "diaries" ? "diaries" : "meetings");
+      setOpenMeetingId({ id, kind });
     });
   }, []);
   useEffect(() => {
@@ -1558,9 +1559,14 @@ export default function ControlPanel({ initialSettingsSection }: ControlPanelPro
                   />
                 </Suspense>
               )}
-              {activeView === "meetings" && (
+              {activeView === "whisperash-notes" && (
+                <Suspense fallback={null}><WhisperAshNotes /></Suspense>
+              )}
+              {(activeView === "meetings" || activeView === "diaries") && (
                 <Suspense fallback={null}>
-                  <WhisperAshMeetings openMeeting={openMeetingId} />
+                  <WhisperAshMeetings key={activeView} kind={activeView}
+                    openMeeting={(openMeetingId?.kind || "meetings") === activeView ? openMeetingId : null}
+                    onOpenRecorder={setActiveView} />
                 </Suspense>
               )}
               {activeView === "dictionary" && (

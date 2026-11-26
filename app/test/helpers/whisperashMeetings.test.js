@@ -432,6 +432,42 @@ function tmpDir() {
   return fs.mkdtempSync(path.join(os.tmpdir(), "wa-meetings-"));
 }
 
+test("a diary uses Gemini, has a dated title, and syncs only within its account", async (t) => {
+  const dir = tmpDir();
+  t.after(() => {
+    // The test owns this directory, created by mkdtemp.
+    fs.rmSync(dir, { recursive: true, force: true });
+  });
+  let owner = "test-owner";
+  const { fetchImpl, calls } = makeFetch({
+    geminiAudio: () => jsonResponse(200, geminiAnswer("[00:00] Kal main park gaya")),
+    geminiText: () => jsonResponse(200, geminiAnswer("Title: Walk in the park\nSummary:\nI went to the park.")),
+  });
+  const store = new WhisperAshMeetings({
+    dir, getOwner: () => owner, environmentManager: { getGeminiKey: () => "test-key" }, fetch: fetchImpl,
+  });
+  const { id } = store.start({ kind: "diaries" });
+  store.append({ id, part: 0, data: AUDIO, partStartMs: 0 });
+  store.stop({ id, durationMs: 5000 });
+  await waitFor(store, id);
+  const diary = store.get({ id });
+  assert.match(diary.title, /\d{4} · Walk in the park$/);
+  assert.equal(diary.summary, "I went to the park.");
+  assert.deepEqual(calls.map((c) => c.kind), ["geminiAudio", "geminiText"]);
+  assert.match(calls[0].init.body, /personal voice diary/);
+  assert.match(calls[1].init.body, /first person/);
+  assert.equal(store.list().length, 0);
+  assert.equal(store.list({ kind: "diaries" }).length, 1);
+  assert.ok(store.syncItems("diaries")[0].data.transcript);
+  assert.equal(store.syncItems("diaries")[0].data.audio, undefined);
+  owner = "test-other-owner";
+  assert.equal(store.list({ kind: "diaries" }).length, 0);
+  assert.equal(store.get({ id }), null);
+  assert.equal(store.applyRemote({ kind: "diaries", id, deleted: true }), false);
+  owner = "test-owner";
+  assert.equal(store.list({ kind: "diaries" }).length, 1);
+});
+
 function waitFor(store, id) {
   return store.processing.get(id) || Promise.resolve();
 }

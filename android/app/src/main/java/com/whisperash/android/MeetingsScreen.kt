@@ -87,23 +87,32 @@ fun MeetingsTab(
     askNotificationsOnce: () -> Unit,
     autoRecord: Boolean = false,
     onAutoRecordHandled: () -> Unit = {},
+    kind: RecordingKind = RecordingKind.MEETING,
+    onOpenOtherRecorder: () -> Unit = {},
 ) {
     val context = LocalContext.current
     val live by MeetingRecorderService.state.collectAsState()
     var openId by remember { mutableStateOf<String?>(null) }
     var refresh by remember { mutableIntStateOf(0) }
     var message by remember { mutableStateOf("") }
+    val owner = if (kind.isDiary) app.settings.userId else ""
+    val recordingHere = live.recordingId != null && live.recordingKind == kind &&
+        (!kind.isDiary || live.recordingOwner == owner || live.recordingOwner.isEmpty())
+    val recordingElsewhere = live.recordingId != null && !recordingHere
 
     fun record() {
         message = ""
         MeetingRecorderService.clearMessage()
         if (!hasMic()) { askMic(); return }
-        if (!app.canRecordMeetings()) {
-            message = "Sign in under Settings → Account, or add a Gemini, Deepgram or Groq key in Settings (My own keys)."
+        if (recordingElsewhere) { onOpenOtherRecorder(); return }
+        val ready = if (kind.isDiary) app.meetingTarget(MeetingRoutes.GEMINI) != null else app.canRecordMeetings()
+        if (!ready) {
+            message = if (kind.isDiary) "Sign in under Settings → Account or add a Gemini key to transcribe your diary."
+                else "Sign in under Settings → Account, or add a Gemini, Deepgram or Groq key in Settings (My own keys)."
             return
         }
         askNotificationsOnce()
-        MeetingRecorderService.send(context, MeetingRecorderService.ACTION_START)
+        MeetingRecorderService.send(context, MeetingRecorderService.ACTION_START, kind = kind)
     }
 
     LaunchedEffect(autoRecord) {
@@ -116,7 +125,7 @@ fun MeetingsTab(
 
     val id = openId
     when {
-        live.recordingId != null -> RecordingView(live,
+        recordingHere -> RecordingView(live,
             onPause = { MeetingRecorderService.send(context, MeetingRecorderService.ACTION_PAUSE) },
             onResume = { MeetingRecorderService.send(context, MeetingRecorderService.ACTION_RESUME) },
             onStop = {
@@ -125,7 +134,7 @@ fun MeetingsTab(
             },
             onCancel = { MeetingRecorderService.send(context, MeetingRecorderService.ACTION_CANCEL) })
         id != null -> {
-            val m = remember(id, version, refresh, live.working[id]) { app.db.meeting(id) }
+            val m = remember(id, version, refresh, live.working[id]) { app.db.meeting(id)?.takeIf { it.kind == kind && it.diaryOwner == owner } }
             if (m == null) {
                 // Still being saved right after Stop: wait for it; otherwise it was deleted.
                 if (live.working.containsKey(id)) Busy(live.working[id] ?: "Saving…") else LaunchedEffect(id) { openId = null }
@@ -134,8 +143,9 @@ fun MeetingsTab(
                 onChanged = { refresh++ },
                 onDeleted = { openId = null; refresh++ })
         }
-        else -> MeetingList(app, version + refresh, live, live.message.ifEmpty { message },
-            onOpen = { openId = it }, onRecord = { record() })
+        else -> MeetingList(app, version + refresh, live,
+            (if (live.recordingKind == kind) live.message else "").ifEmpty { message },
+            kind, owner, recordingElsewhere, onOpen = { openId = it }, onRecord = { record() })
     }
 }
 
@@ -158,8 +168,10 @@ private fun statusChip(m: Meeting, progress: String?): Pair<String, Tone>? = whe
 }
 
 @Composable
-private fun MeetingList(app: WhisperAshApp, version: Int, live: MeetingLive, message: String, onOpen: (String) -> Unit, onRecord: () -> Unit) {
-    val meetings = remember(version, live.working.keys) { app.db.meetings() }
+private fun MeetingList(app: WhisperAshApp, version: Int, live: MeetingLive, message: String,
+    kind: RecordingKind, owner: String, recordingElsewhere: Boolean, onOpen: (String) -> Unit, onRecord: () -> Unit) {
+    val meetings = remember(kind, owner, version, live.working.keys) { app.db.meetings(kind, owner) }
+    val icon = if (kind.isDiary) Ic.pen else Ic.users
     var minutes by remember { mutableStateOf(app.sync.lastPlan?.meetingSummary()) }
     LaunchedEffect(version, app.sync.signedIn) {
         if (app.sync.signedIn) minutes = withContext(Dispatchers.IO) { app.sync.fetchPlan() }?.meetingSummary() ?: minutes
@@ -171,25 +183,29 @@ private fun MeetingList(app: WhisperAshApp, version: Int, live: MeetingLive, mes
             contentPadding = PaddingValues(top = 12.dp, bottom = 16.dp),
         ) {
             item {
-                LargeTitle("Meetings")
+                LargeTitle(kind.section)
                 Subtitle(listOfNotNull(
-                    if (meetings.isEmpty()) "Transcript with speakers and a summary" else counted(meetings.size, "meeting"),
-                    minutes?.takeIf { app.sync.signedIn },
+                    if (kind.isDiary) {
+                        if (meetings.isEmpty()) "Voice entries with transcripts and summaries" else counted(meetings.size, "entry")
+                    } else if (meetings.isEmpty()) "Transcript with speakers and a summary" else counted(meetings.size, "meeting"),
+                    minutes?.takeIf { app.sync.signedIn && !kind.isDiary },
                 ).joinToString(" · "))
             }
             if (message.isNotEmpty()) item { NoteBox(message, Tone.Bad) }
             if (meetings.isEmpty()) item {
                 GlassCard {
-                    Text("No meetings yet", style = G.ItemTitle)
-                    Meta("Put the phone on the table and tap Record meeting. It keeps recording with the screen off, up to 3 hours, in Hindi, English or Hinglish.",
-                        Modifier.padding(top = 4.dp))
+                    Text(if (kind.isDiary) "No diary entries yet" else "No meetings yet", style = G.ItemTitle)
+                    val description = if (kind.isDiary)
+                        "Record an entry in Hindi, English or Hinglish. Gemini creates a transcript, summary and dated title."
+                    else "Put the phone on the table and tap Record meeting. It keeps recording with the screen off, up to 3 hours, in Hindi, English or Hinglish."
+                    Meta(description, Modifier.padding(top = 4.dp))
                 }
             }
             items(meetings, key = { it.id }) { m ->
                 val progress = live.working[m.id]
                 GlassCard(padding = PaddingValues(16.dp), onClick = { onOpen(m.id) }) {
                     Row(verticalAlignment = Alignment.Top) {
-                        IconSquare(Ic.users, if (m.status == "failed") Tone.Bad else Tone.Info)
+                        IconSquare(icon, if (m.status == "failed") Tone.Bad else Tone.Info)
                         Spacer(Modifier.width(12.dp))
                         Column(Modifier.weight(1f)) {
                             Text(m.title, style = G.ItemTitle, maxLines = 2, overflow = TextOverflow.Ellipsis)
@@ -209,7 +225,8 @@ private fun MeetingList(app: WhisperAshApp, version: Int, live: MeetingLive, mes
                 }
             }
         }
-        Btn("Record meeting", onRecord, Modifier.fillMaxWidth().padding(horizontal = Gutter).padding(top = 8.dp, bottom = bottomClearance() - 4.dp),
+        val action = if (recordingElsewhere) "Open recording" else if (kind.isDiary) "Record diary entry" else "Record meeting"
+        Btn(action, onRecord, Modifier.fillMaxWidth().padding(horizontal = Gutter).padding(top = 8.dp, bottom = bottomClearance() - 4.dp),
             BtnKind.Primary, Ic.wave, big = true)
     }
 }
@@ -271,7 +288,7 @@ private fun MeetingDetail(
     val canRetry = progress == null && m.status != "recording" && m.audioPath?.let { java.io.File(it).exists() } == true
 
     Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(horizontal = Gutter).padding(bottom = bottomClearance())) {
-        BackBar("Meetings", { saveTitle(); onBack() }) {
+        BackBar(m.kind.section, { saveTitle(); onBack() }) {
             statusChip(m, progress)?.let { (t, tone) -> Chip(t, tone) }
             if (edited) { Spacer(Modifier.width(8.dp)); Btn("Save", { saveTitle() }, kind = BtnKind.Tint, icon = Ic.check) }
         }
@@ -317,34 +334,34 @@ private fun MeetingDetail(
                 RoundGlass(Ic.copy, "Copy", {
                     saveTitle()
                     (context.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager)
-                        .setPrimaryClip(ClipData.newPlainText("Meeting", MeetingText.shareText(shown)))
+                        .setPrimaryClip(ClipData.newPlainText(m.kind.label, MeetingText.shareText(shown)))
                     Toast.makeText(context, "Copied", Toast.LENGTH_SHORT).show()
                 })
                 RoundGlass(Ic.share, "Share", {
                     saveTitle()
                     val send = Intent(Intent.ACTION_SEND).setType("text/plain")
                         .putExtra(Intent.EXTRA_SUBJECT, shown.title).putExtra(Intent.EXTRA_TEXT, MeetingText.shareText(shown))
-                    context.startActivity(Intent.createChooser(send, "Share meeting notes").addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
+                    context.startActivity(Intent.createChooser(send, if (m.kind.isDiary) "Share diary entry" else "Share meeting notes").addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
                 })
             }
             if (progress == null) RoundGlass(Ic.more, "More", { menu = true })
         }
-        if (menu) GlassSheet(title.ifBlank { "Meeting" }, { menu = false }) {
+        if (menu) GlassSheet(title.ifBlank { m.kind.defaultTitle(m.createdMs) }, { menu = false }) {
             // Hidden when the recording is no longer on this phone.
             if (progress == null && Retranscribe.canRun(m.audioPath)) SheetRow("Re-transcribe (better model)", Ic.spark, Tone.Ai,
-                sub = "${GeminiMeetingClient.BETTER_LABEL}, with speakers. The current transcript is kept for Undo.") {
+                sub = "${GeminiMeetingClient.BETTER_LABEL}. The current transcript is kept for Undo.") {
                 menu = false; saveTitle()
                 MeetingRecorderService.send(context, MeetingRecorderService.ACTION_RETRY, m.id, fresh = true, better = true)
             }
             if (m.prevTranscript != null) SheetRow("Restore previous transcript", Ic.undo, sub = "The text from before the re-transcribe") {
                 menu = false; app.db.restoreMeeting(m.id); app.sync.requestSync(SyncClient.Reason.CHANGE); onChanged()
             }
-            SheetRow("Delete meeting", Ic.trash, Tone.Bad) { menu = false; confirmDelete = true }
+            SheetRow(if (m.kind.isDiary) "Delete diary entry" else "Delete meeting", Ic.trash, Tone.Bad) { menu = false; confirmDelete = true }
         }
         if (confirmDelete) {
             Spacer(Modifier.height(10.dp))
             GlassCard(fill = SolidColor(Color(0xCCFFFFFF))) {
-                Text("Delete this meeting?", style = G.ItemTitle)
+                Text(if (m.kind.isDiary) "Delete this diary entry?" else "Delete this meeting?", style = G.ItemTitle)
                 Meta("The transcript, summary and recording are removed from this phone, and the text from your other devices.", Modifier.padding(top = 2.dp, bottom = 10.dp))
                 Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
                     Btn("Cancel", { confirmDelete = false }, kind = BtnKind.Glass)
@@ -373,7 +390,8 @@ private fun MeetingDetail(
             }
         }
         if (m.status == "done" && m.audioPath != null) {
-            Meta("The recording stays on this phone (not synced) so you can redo the transcript; Delete removes it.", Modifier.padding(top = 12.dp))
+            Meta("The recording stays on this phone so you can redo the transcript. The transcript and summary sync with your account.",
+                Modifier.padding(top = 12.dp))
         }
     }
 }

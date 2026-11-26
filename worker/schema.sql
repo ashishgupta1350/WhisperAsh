@@ -18,7 +18,7 @@ CREATE TABLE IF NOT EXISTS sessions (
 );
 CREATE INDEX IF NOT EXISTS sessions_user ON sessions(user_id);
 
--- One table for every synced record: kind = 'history' | 'dictionary' | 'settings'
+-- One table for every synced record, including notes, folders, meetings and diaries.
 CREATE TABLE IF NOT EXISTS items (
   user_id    TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
   kind       TEXT NOT NULL,

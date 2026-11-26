@@ -17,7 +17,7 @@ const PUSH_LIMIT = 200;
 const MAX_ITEM_BYTES = 64 * 1024;
 const MAX_MEETING_ITEM_BYTES = 512 * 1024;  // a 2-3 hour transcript + summary (text only, never audio)
 const MAX_PUSH_BODY = 6 * 1024 * 1024;
-const KINDS = new Set(['history', 'dictionary', 'settings', 'notes', 'meetings', 'folders']);
+const KINDS = new Set(['history', 'dictionary', 'settings', 'notes', 'meetings', 'folders', 'diaries']);
 
 const enc = new TextEncoder();
 
@@ -273,7 +273,7 @@ async function push(request, env, session) {
     if (!it || !KINDS.has(it.kind) || typeof it.id !== 'string' || !it.id || it.id.length > 100) throw new HttpError(400, 'invalid_item');
     if (!Number.isFinite(it.updated_at)) throw new HttpError(400, 'invalid_item');
     const data = JSON.stringify(it.data ?? {});
-    if (data.length > (it.kind === 'meetings' ? MAX_MEETING_ITEM_BYTES : MAX_ITEM_BYTES)) throw new HttpError(400, 'item_too_large');
+    if (data.length > (it.kind === 'meetings' || it.kind === 'diaries' ? MAX_MEETING_ITEM_BYTES : MAX_ITEM_BYTES)) throw new HttpError(400, 'item_too_large');
     // Clamp client clocks that run far ahead so one bad clock cannot win forever.
     const updatedAt = Math.min(Math.trunc(it.updated_at), now + 5 * 60 * 1000);
     stmts.push(env.DB.prepare(

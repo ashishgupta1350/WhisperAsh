@@ -75,15 +75,29 @@ export interface WhisperAshPlan {
 
 /** The "Record meeting" recorder, relayed by main to the pill. Elapsed = accumulatedMs (+ now - runStartedAt while recording). */
 export interface WhisperAshRecorderState {
+  kind?: WhisperAshRecordingKind;
   phase: "idle" | "starting" | "recording" | "paused" | "stopping";
   id: string | null;
   accumulatedMs: number;
   runStartedAt: number;
 }
 
+export type WhisperAshRecordingKind = "meetings" | "diaries";
+
+export interface WhisperAshNote {
+  id: string;
+  updatedAt: number;
+  title: string;
+  body: string;
+  pinned: boolean;
+  locked: boolean;
+  folderId: string | null;
+}
+
 export type WhisperAshMeetingStatus = "recording" | "transcribing" | "done" | "failed";
 
 export interface WhisperAshMeetingProgress {
+  kind?: WhisperAshRecordingKind;
   id: string | null;
   status?: WhisperAshMeetingStatus | "deleted";
   error?: string | null;
@@ -151,7 +165,12 @@ export interface WhisperAshBridge {
   onState: (cb: (state: WhisperAshState) => void) => () => void;
   onApplySettings: (cb: (values: Record<string, string | null>) => void) => () => void;
   onHistoryChanged: (cb: () => void) => () => void;
-  meetingStart: () => Promise<WhisperAshMeetingResult<{ id: string }>>;
+  notesList: () => Promise<WhisperAshMeetingResult<{ notes: WhisperAshNote[]; folders: Array<{ id: string; name: string }> }>>;
+  notesSave: (payload: { id?: string; updatedAt?: number; title: string; body: string }) =>
+    Promise<WhisperAshMeetingResult<{ id: string; updatedAt: number }>>;
+  notesDelete: (payload: Pick<WhisperAshNote, "id" | "updatedAt">) => Promise<WhisperAshMeetingResult<void>>;
+  onNotesChanged: (cb: () => void) => () => void;
+  meetingStart: (kind?: WhisperAshRecordingKind) => Promise<WhisperAshMeetingResult<{ id: string }>>;
   meetingAppend: (p: {
     id: string;
     part: number;
@@ -160,7 +179,7 @@ export interface WhisperAshBridge {
   }) => Promise<{ ok: boolean; error?: string }>;
   meetingStop: (p: { id: string; durationMs: number }) => Promise<WhisperAshMeetingResult<WhisperAshMeetingSummary>>;
   meetingCancel: (id: string) => Promise<WhisperAshMeetingResult<{ ok: boolean }>>;
-  meetingList: () => Promise<WhisperAshMeetingResult<WhisperAshMeetingSummary[]>>;
+  meetingList: (kind?: WhisperAshRecordingKind) => Promise<WhisperAshMeetingResult<WhisperAshMeetingSummary[]>>;
   meetingGet: (id: string) => Promise<WhisperAshMeetingResult<WhisperAshMeetingDetail | null>>;
   meetingDelete: (id: string) => Promise<WhisperAshMeetingResult<{ ok: boolean }>>;
   meetingRetry: (id: string) => Promise<WhisperAshMeetingResult<WhisperAshMeetingSummary>>;
@@ -178,7 +197,7 @@ export interface WhisperAshBridge {
   getMeetingRecorderState: () => Promise<WhisperAshRecorderState>;
   onMeetingRecorderState: (cb: (state: WhisperAshRecorderState) => void) => () => void;
   /** Main: open the Meetings page on this meeting (sent after Stop). */
-  onMeetingOpen: (cb: (payload: { id: string }) => void) => () => void;
+  onMeetingOpen: (cb: (payload: { id: string; kind?: WhisperAshRecordingKind }) => void) => () => void;
   onMeetingHotkey: (cb: () => void) => () => void;
 }
 

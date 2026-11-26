@@ -81,7 +81,7 @@ class SyncClient(
 
     private fun snapshot(busy: Boolean) = SyncState(
         signedIn, settings.email, busy, settings.lastSyncAt, settings.lastSyncError,
-        try { db.dirtyCount() + db.dirtyNoteCount() + db.dirtyMeetingCount() + if (settings.settingsDirty) 1 else 0 } catch (_: Exception) { 0 },
+        try { db.dirtyCount() + db.dirtyNoteCount() + db.dirtyMeetingCount(settings.userId) + if (settings.settingsDirty) 1 else 0 } catch (_: Exception) { 0 },
     )
 
     fun refreshState() { _state.value = snapshot(_state.value.busy) }
@@ -156,13 +156,17 @@ class SyncClient(
         val user = data.getJSONObject("user")
         val id = user.getString("id")
         // A different account than before: offer everything local to it, pull its data in full.
-        if (settings.userId.isNotEmpty() && settings.userId != id) db.markAllDirty()
-        secure.put(SecureStore.SYNC_TOKEN, data.getString("token"))
-        settings.email = user.getString("email")
-        settings.userId = id
-        settings.cursorJson = null
-        settings.lastSyncError = ""
-        refreshState()
+        mutex.withLock {
+            if (settings.userId.isNotEmpty() && settings.userId != id) db.markAllDirty()
+            if (settings.userId.isEmpty()) db.claimLocalDiaries(id)
+            secure.put(SecureStore.SYNC_TOKEN, data.getString("token"))
+            settings.email = user.getString("email")
+            settings.userId = id
+            settings.cursorJson = null
+            settings.lastSyncError = ""
+            dataVersion.value++
+            refreshState()
+        }
         syncNow(Reason.LOGIN)
     }
 
@@ -176,7 +180,7 @@ class SyncClient(
         request("/auth/change-password", JSONObject().put("current", current).put("password", newPassword))
     }
 
-    suspend fun logout() {
+    suspend fun logout() = mutex.withLock {
         try { request("/auth/logout", null) } catch (_: Exception) {}
         secure.put(SecureStore.SYNC_TOKEN, null)
         settings.email = ""
@@ -202,7 +206,9 @@ class SyncClient(
             push()
             pushFolders(force = reason == Reason.MANUAL || reason == Reason.LOGIN)
             pushNotes(force = reason == Reason.MANUAL || reason == Reason.LOGIN)
-            pushMeetings(force = reason == Reason.MANUAL || reason == Reason.LOGIN)
+            val force = reason == Reason.MANUAL || reason == Reason.LOGIN
+            pushRecordings(RecordingKind.MEETING, force)
+            pushRecordings(RecordingKind.DIARY, force)
             pull()
             settings.lastSyncAt = System.currentTimeMillis()
             settings.lastSyncError = ""
@@ -300,10 +306,15 @@ class SyncClient(
     }
 
     /** Meetings, like notes, go in their own upload so an older server's 400 never blocks the rest. Few per call: each can be ~500 KB. */
-    private fun pushMeetings(force: Boolean = false) {
-        if (!force && System.currentTimeMillis() - settings.meetingsUnsupportedAt < 6 * 3_600_000L) return
+    private fun pushRecordings(kind: RecordingKind, force: Boolean) {
+        val unsupportedAt = if (kind.isDiary) settings.diariesUnsupportedAt else settings.meetingsUnsupportedAt
+        fun updateSupport(at: Long) {
+            if (kind.isDiary) settings.diariesUnsupportedAt = at else settings.meetingsUnsupportedAt = at
+        }
+        val owner = if (kind.isDiary) settings.userId.takeIf(String::isNotEmpty) ?: return else ""
+        if (!force && System.currentTimeMillis() - unsupportedAt < 6 * 3_600_000L) return
         while (true) {
-            val rows = db.dirtyMeetings(MEETING_BATCH)
+            val rows = db.dirtyMeetings(MEETING_BATCH, kind, owner)
             if (rows.isEmpty()) return
             val items = JSONArray()
             for (r in rows) items.put(
@@ -332,13 +343,13 @@ class SyncClient(
                     continue
                 }
                 if (e.status == 400) {
-                    settings.meetingsUnsupportedAt = System.currentTimeMillis()
-                    Log.w(TAG, "sync server does not take meetings yet; kept on this phone")
+                    updateSupport(System.currentTimeMillis())
+                    Log.w(TAG, "Sync server does not support ${kind.wireName} yet; kept on this phone")
                     return
                 }
                 throw e
             }
-            settings.meetingsUnsupportedAt = 0
+            updateSupport(0)
             db.markMeetingsClean(rows)
         }
     }
@@ -366,6 +377,8 @@ class SyncClient(
                     if (db.applyRemoteFolder(id, ts, deleted, data)) changed = true
                 } else if (kind == "meetings") {
                     if (db.applyRemoteMeeting(id, ts, deleted, data)) changed = true
+                } else if (kind == RecordingKind.DIARY.wireName && settings.userId.isNotEmpty()) {
+                    if (db.applyRemoteMeeting(id, ts, deleted, data, RecordingKind.DIARY, settings.userId)) changed = true
                 } else if (db.applyRemote(kind, id, ts, deleted, data)) changed = true
             }
             cursor = page.optJSONObject("cursor")

@@ -11,6 +11,7 @@ import type {
   WhisperAshMeetingProgress,
   WhisperAshMeetingSummary,
   WhisperAshPlan,
+  WhisperAshRecordingKind,
 } from "../utils/whisperashSettingsSync";
 import {
   cancelMeeting,
@@ -68,7 +69,12 @@ function progressText(p: WhisperAshMeetingProgress | null | undefined) {
 // ---------------------------------------------------------------------------------------
 
 /** openMeeting: a meeting to select (a new object each time main asks, so the same id reopens). */
-export default function WhisperAshMeetings({ openMeeting }: { openMeeting?: { id: string } | null } = {}) {
+export default function WhisperAshMeetings({ openMeeting, kind = "meetings", onOpenRecorder }: {
+  openMeeting?: { id: string } | null;
+  kind?: WhisperAshRecordingKind;
+  onOpenRecorder: (kind: WhisperAshRecordingKind) => void;
+}) {
+  const diary = kind === "diaries";
   const bridge = window.whisperash;
   const rec = useRecorder();
   const micId = useSettingsStore((s) => s.selectedMicDeviceId);
@@ -84,9 +90,9 @@ export default function WhisperAshMeetings({ openMeeting }: { openMeeting?: { id
   selectedRef.current = selectedId;
 
   const refreshList = useCallback(async () => {
-    const res = await bridge?.meetingList();
+    const res = await bridge?.meetingList(kind);
     if (res?.ok) setMeetings(res.result);
-  }, [bridge]);
+  }, [bridge, kind]);
 
   const refreshDetail = useCallback(
     async (id: string | null) => {
@@ -113,6 +119,7 @@ export default function WhisperAshMeetings({ openMeeting }: { openMeeting?: { id
       setSignedIn(s.signedIn);
     });
     const offProgress = bridge.onMeetingProgress((p) => {
+      if ((p.kind || "meetings") !== kind) return;
       if (p.id) setProgress((prev) => ({ ...prev, [p.id as string]: p }));
       void refreshList();
       if (p.id && p.id === selectedRef.current) {
@@ -125,7 +132,7 @@ export default function WhisperAshMeetings({ openMeeting }: { openMeeting?: { id
       offState();
       offProgress();
     };
-  }, [bridge, refreshList, refreshDetail]);
+  }, [bridge, refreshList, refreshDetail, kind]);
 
   useEffect(() => {
     void refreshDetail(selectedId);
@@ -137,16 +144,17 @@ export default function WhisperAshMeetings({ openMeeting }: { openMeeting?: { id
 
   // Open the meeting that was just stopped.
   useEffect(() => {
-    const stoppedId = rec.phase === "idle" ? takeLastStoppedId() : null;
+    const stoppedId = rec.phase === "idle" ? takeLastStoppedId(kind) : null;
     if (stoppedId) {
       setSelectedId(stoppedId);
       void refreshList();
     }
-  }, [rec.phase, refreshList]);
+  }, [rec.phase, refreshList, kind]);
 
   if (!bridge) return <div className="p-6 text-sm">WhisperAsh bridge not available.</div>;
 
   const active = rec.phase === "recording" || rec.phase === "paused";
+  const otherRecorder = rec.phase !== "idle" && rec.kind !== kind;
   const showMinutes = signedIn && plan && typeof plan.meetingLeftMin === "number" && typeof plan.meetingLimitMin === "number";
 
   const act = async (fn: () => Promise<{ ok: boolean; error?: string }>, ok?: string) => {
@@ -180,19 +188,22 @@ export default function WhisperAshMeetings({ openMeeting }: { openMeeting?: { id
     <div className="h-full overflow-y-auto px-6 py-5 space-y-5">
       {/* Recorder */}
       <div className="rounded-xl border border-border bg-card p-5 space-y-3">
-        {!active && rec.phase !== "stopping" ? (
+        {otherRecorder ? (
+          <Button variant="outline" onClick={() => onOpenRecorder(rec.kind)}>Open current recording</Button>
+        ) : !active && rec.phase !== "stopping" ? (
           <div className="flex flex-col items-center gap-2 py-2">
             <Button
               size="lg"
               className="h-14 px-8 text-base"
               disabled={rec.phase === "starting"}
-              onClick={() => void startMeeting(micId)}
+              onClick={() => void startMeeting(micId || "", kind)}
             >
-              <span className="text-red-500 mr-1">●</span> Record meeting
+              <span className="text-red-500 mr-1">●</span> {diary ? "Record diary entry" : "Record meeting"}
             </Button>
             <div className="text-xs text-muted-foreground text-center">
-              Records your microphone (up to 3 hours). Hindi, English and Hinglish are written in Roman script, with
-              speakers, a summary, decisions and action items.
+              {diary
+                ? "Record in Hindi, English or Hinglish. Gemini writes a transcript, summary and dated title."
+                : "Records your microphone (up to 3 hours). Hindi, English and Hinglish are written in Roman script, with speakers, a summary and action items."}
             </div>
           </div>
         ) : (
@@ -233,8 +244,8 @@ export default function WhisperAshMeetings({ openMeeting }: { openMeeting?: { id
             </div>
           </div>
         )}
-        {rec.error ? <div className="text-xs text-red-500 text-center">{rec.error}</div> : null}
-        {showMinutes ? (
+        {rec.error && !otherRecorder ? <div className="text-xs text-red-500 text-center">{rec.error}</div> : null}
+        {showMinutes && !diary ? (
           <div className="text-xs text-muted-foreground text-center">
             {plan!.meetingLeftMin!.toLocaleString()} of {plan!.meetingLimitMin!.toLocaleString()} meeting minutes left
             today
@@ -248,7 +259,7 @@ export default function WhisperAshMeetings({ openMeeting }: { openMeeting?: { id
         {/* List */}
         <div className="space-y-1">
           {meetings.length === 0 ? (
-            <div className="text-sm text-muted-foreground">No meetings yet.</div>
+            <div className="text-sm text-muted-foreground">{diary ? "No diary entries yet." : "No meetings yet."}</div>
           ) : (
             meetings.map((m) => {
               const p = progress[m.id] || m.progress;

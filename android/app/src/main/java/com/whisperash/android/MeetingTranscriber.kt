@@ -47,13 +47,15 @@ class MeetingChain(
     private val audio: List<AudioEngine>,
     private val text: List<TextEngine>,
     private val maxParallel: Int = 2,
+    private val kind: RecordingKind = RecordingKind.MEETING,
     private val log: (String) -> Unit = {},
 ) {
     class PartFailed(message: String) : Exception(message)
 
     fun transcribePart(part: MeetingPart, previous: List<String>?): PartResult {
         if (!part.hasSpeech) return PartResult(part.index, "", emptyList())
-        val prompt = MeetingPrompts.transcribe(part.index + 1, part.total, previous)
+        val prompt = if (kind.isDiary) DiaryPrompts.transcribe(part.index + 1, part.total)
+            else MeetingPrompts.transcribe(part.index + 1, part.total, previous)
         val errors = ArrayList<String>()
         for (e in audio) {
             try {
@@ -144,7 +146,7 @@ class MeetingChain(
         if (transcript.isBlank()) return null
         for (e in text) {
             try {
-                val s = MeetingText.parseSummary(e.complete(MeetingPrompts.SUMMARY, transcript))
+                val s = MeetingText.parseSummary(e.complete(if (kind.isDiary) DiaryPrompts.SUMMARY else MeetingPrompts.SUMMARY, transcript))
                 if (s.title != null || s.body.isNotBlank()) return s
             } catch (ex: Exception) {
                 if (isStop(ex)) throw MeetingStopped(ex.message ?: "WhisperAsh stopped the meeting summary")
@@ -184,18 +186,23 @@ class MeetingChain(
  * (minimal thinking, 4-minute limit), so a failure is reported instead of quietly using another
  * engine; ROMANIZE and SUMMARY run as usual.
  */
-class MeetingEngines(private val app: WhisperAshApp, private val better: Boolean = false) {
+class MeetingEngines(private val app: WhisperAshApp, private val better: Boolean = false,
+    private val kind: RecordingKind = RecordingKind.MEETING, private val diaryOwner: String = "") {
     private val gemini = GeminiMeetingClient(app.http)
     private val deepgram = DeepgramClient(app.http)
     private val groq = GroqMeetingClient(app.http)
 
-    fun audio(): List<AudioEngine> = if (better) listOfNotNull(
-        app.meetingTarget(MeetingRoutes.GEMINI)?.let { t ->
+    private fun geminiTarget(): ApiTarget? = app.meetingTarget(MeetingRoutes.GEMINI)
+        ?.takeIf { !kind.isDiary || !it.viaAccount || app.settings.userId == diaryOwner }
+
+    fun audio(): List<AudioEngine> = if (better || kind.isDiary) listOfNotNull(
+        geminiTarget()?.let { t ->
             object : AudioEngine {
                 override val name = "gemini"
                 override val needsRomanize = false
                 override fun transcribe(part: MeetingPart, prompt: String) = MeetingText.modelLines(MeetingChain.retryIfBusy {
-                    gemini.generate(t, null, prompt, part.file, part.mime, GeminiMeetingClient.BETTER_MODEL, GatewayHeaders.MEETING)
+                    gemini.generate(t, null, prompt, part.file, part.mime,
+                        if (better) GeminiMeetingClient.BETTER_MODEL else GeminiMeetingClient.MODEL, GatewayHeaders.MEETING)
                 })
             }
         },
@@ -229,14 +236,14 @@ class MeetingEngines(private val app: WhisperAshApp, private val better: Boolean
     )
 
     fun text(): List<TextEngine> = listOfNotNull(
-        app.meetingTarget(MeetingRoutes.GEMINI)?.let { t ->
+        geminiTarget()?.let { t ->
             object : TextEngine {
                 override val name = "gemini"
                 override val maxWords = 6000
                 override fun complete(system: String, user: String) = MeetingChain.retryIfBusy { gemini.generate(t, system, user) }
             }
         },
-        app.meetingTarget(MeetingRoutes.GROQ)?.let { t ->
+        if (kind.isDiary) null else app.meetingTarget(MeetingRoutes.GROQ)?.let { t ->
             object : TextEngine {
                 override val name = "groq"
                 // 4,096 output tokens hold about 2,000 words of Hinglish.
@@ -275,14 +282,14 @@ class MeetingJob(private val app: WhisperAshApp) {
         )
         if (better) progress("Re-transcribing with ${GeminiMeetingClient.BETTER_LABEL}…")
 
-        val engines = MeetingEngines(app, better)
+        val engines = MeetingEngines(app, better, m.kind, m.diaryOwner)
         val audioEngines = engines.audio()
         if (audioEngines.isEmpty()) {
-            fail(id, if (better) "No Gemini key — add one in Settings or sign in"
+            fail(id, if (better || m.kind.isDiary) "Sign into the diary's WhisperAsh account or add a Gemini key in Settings, then tap Retry."
                 else "Sign in on the Account tab, or add a Gemini, Deepgram or Groq key in Settings, then tap Retry.", better)
             return
         }
-        val chain = MeetingChain(audioEngines, engines.text(), log = { Log.w(MeetingChain.TAG, it) })
+        val chain = MeetingChain(audioEngines, engines.text(), kind = m.kind, log = { Log.w(MeetingChain.TAG, it) })
 
         progress("Preparing the recording…")
         val (rms, speech) = MeetingFiles.readEnergy(dir) ?: (FloatArray(0) to BooleanArray(0))
@@ -318,7 +325,7 @@ class MeetingJob(private val app: WhisperAshApp) {
         val transcript = MeetingText.join(spans, results)
         var note: String? = null
         val summary = if (transcript.isBlank()) null else {
-            progress("Writing the summary…")
+            progress(if (m.kind.isDiary) "Writing the diary summary…" else "Writing the summary…")
             try {
                 chain.summarize(transcript) ?: run { note = "The summary could not be written; the transcript is complete."; null }
             } catch (e: MeetingStopped) {
@@ -327,11 +334,15 @@ class MeetingJob(private val app: WhisperAshApp) {
         }
         val current = app.db.meeting(id) ?: run { MeetingFiles.deleteFor(audio.path); return } // deleted meanwhile
         // Keep a title the user typed while it was transcribing.
-        val untouched = current.title.isBlank() || current.title == MeetingText.defaultTitle(current.createdMs) ||
+        val untouched = current.title.isBlank() || current.title == current.kind.defaultTitle(current.createdMs) ||
             (better && current.title == current.prevTitle)
         app.db.saveMeeting(current.copy(
-            title = if (untouched) summary?.title ?: current.title else current.title,
-            summary = summary?.body ?: "",
+            title = when {
+                !untouched -> current.title
+                m.kind.isDiary -> DiaryText.title(m.createdMs, summary?.title ?: DiaryText.themeFromTranscript(transcript))
+                else -> summary?.title ?: current.title
+            },
+            summary = summary?.body?.let { if (m.kind.isDiary) it.replace(Regex("^Summary\\s*:\\s*", RegexOption.IGNORE_CASE), "") else it } ?: "",
             transcript = transcript.ifBlank { "(No speech was heard in this recording.)" },
             engine = MeetingText.engineLabel(results).ifEmpty { audioEngines.first().name },
             status = "done",

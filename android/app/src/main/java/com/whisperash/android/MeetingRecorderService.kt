@@ -194,6 +194,8 @@ class MeetingRecorder(private val file: File, private val maxMs: Long = MAX_MS) 
 /** What the Meetings screen shows live. */
 data class MeetingLive(
     val recordingId: String? = null,
+    val recordingKind: RecordingKind = RecordingKind.MEETING,
+    val recordingOwner: String = "",
     val elapsedMs: Long = 0,
     val level: Float = 0f,
     val paused: Boolean = false,
@@ -216,6 +218,7 @@ class MeetingRecorderService : Service() {
     private var ticker: Job? = null
     private var wake: PowerManager.WakeLock? = null
     private var lastNotified = ""
+    private var notificationKind = RecordingKind.MEETING
 
     override fun onBind(intent: Intent?): IBinder? = null
 
@@ -231,13 +234,18 @@ class MeetingRecorderService : Service() {
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
         val action = intent?.action
+        val kind = RecordingKind.fromWire(intent?.getStringExtra(EXTRA_KIND))
+        if (action == ACTION_START && recorder == null) notificationKind = kind
+        if (action == ACTION_RETRY && recorder == null) {
+            intent?.getStringExtra(EXTRA_ID)?.let { id -> app.db.meeting(id)?.kind }?.let { notificationKind = it }
+        }
         // START / RETRY come through startForegroundService: answer with startForeground right away.
         if ((action == ACTION_START || action == ACTION_RETRY) && !goForeground(action == ACTION_START)) {
             if (recorder == null && live.value.working.isEmpty()) stopSelf()
             return START_NOT_STICKY
         }
         when (action) {
-            ACTION_START -> startRecording()
+            ACTION_START -> startRecording(kind)
             ACTION_PAUSE -> setPaused(true)
             ACTION_RESUME -> setPaused(false)
             ACTION_STOP -> stopRecording()
@@ -260,7 +268,7 @@ class MeetingRecorderService : Service() {
     }
 
     // ---------- recording ----------
-    private fun startRecording() {
+    private fun startRecording(kind: RecordingKind) {
         if (recorder != null) return
         val id = UUID.randomUUID().toString()
         val dir = MeetingFiles.dir(filesDir, id).apply { mkdirs() }
@@ -275,8 +283,11 @@ class MeetingRecorderService : Service() {
         }
         val now = System.currentTimeMillis()
         recorder = rec
-        live.update { it.copy(recordingId = id, elapsedMs = 0, paused = false, message = "") }
-        meeting = app.db.saveMeeting(Meeting(id, MeetingText.defaultTitle(now), "", "", "", 0, now, now, file.path, "recording", null))
+        val owner = if (kind.isDiary) app.settings.userId else ""
+        meeting = app.db.saveMeeting(Meeting(id, kind.defaultTitle(now), "", "", "", 0, now, now,
+            file.path, "recording", null, kind = kind, diaryOwner = owner))
+        live.update { it.copy(recordingId = id, recordingKind = kind, recordingOwner = owner,
+            elapsedMs = 0, paused = false, message = "") }
         updateNotification()
         ticker = scope.launch {
             while (isActive) {
@@ -397,9 +408,11 @@ class MeetingRecorderService : Service() {
     }
 
     private fun buildNotification(): android.app.Notification {
+        val kind = if (live.value.recordingId != null) live.value.recordingKind else notificationKind
+        val tab = if (kind.isDiary) MainActivity.TAB_DIARIES else MainActivity.TAB_MEETINGS
         val open = PendingIntent.getActivity(
             this, 0,
-            Intent(this, MainActivity::class.java).putExtra(MainActivity.EXTRA_TAB, MainActivity.TAB_MEETINGS)
+            Intent(this, MainActivity::class.java).putExtra(MainActivity.EXTRA_TAB, tab)
                 .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_SINGLE_TOP or Intent.FLAG_ACTIVITY_CLEAR_TOP),
             PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT,
         )
@@ -415,14 +428,14 @@ class MeetingRecorderService : Service() {
         if (r != null || live.value.recordingId != null) {
             val paused = r?.paused == true
             val elapsed = r?.recordedMs ?: 0
-            b.setContentTitle(if (paused) "Meeting paused" else "Recording meeting")
+            b.setContentTitle(if (paused) "${kind.label.replaceFirstChar { it.uppercase() }} paused" else "Recording ${kind.label}")
             if (paused) b.setContentText("Paused at ${MeetingText.clock(elapsed)}").setUsesChronometer(false).setShowWhen(false)
             else b.setContentText("WhisperAsh is recording").setUsesChronometer(true).setShowWhen(true)
                 .setWhen(System.currentTimeMillis() - elapsed)
             b.addAction(0, if (paused) "Resume" else "Pause", action(if (paused) ACTION_RESUME else ACTION_PAUSE, 1))
             b.addAction(0, "Stop", action(ACTION_STOP, 2))
         } else {
-            b.setContentTitle("Meeting transcript")
+            b.setContentTitle("${kind.label.replaceFirstChar { it.uppercase() }} transcript")
             b.setContentText(live.value.working.values.firstOrNull() ?: "Working…")
             b.setProgress(0, 0, true)
         }
@@ -444,6 +457,7 @@ class MeetingRecorderService : Service() {
         const val ACTION_CANCEL = "com.whisperash.android.meeting.CANCEL"
         const val ACTION_RETRY = "com.whisperash.android.meeting.RETRY"
         const val EXTRA_ID = "id"
+        private const val EXTRA_KIND = "kind"
         const val EXTRA_FRESH = "fresh"
         /** "Re-transcribe (better model)": Gemini [GeminiMeetingClient.BETTER_MODEL] for the audio, old text kept for Undo. */
         const val EXTRA_BETTER = "better"
@@ -453,8 +467,10 @@ class MeetingRecorderService : Service() {
         val state: StateFlow<MeetingLive> get() = live
 
         /** From the app's own screen (in the foreground): start the service or control a recording. */
-        fun send(context: Context, action: String, id: String? = null, fresh: Boolean = false, better: Boolean = false) {
+        fun send(context: Context, action: String, id: String? = null, fresh: Boolean = false, better: Boolean = false,
+            kind: RecordingKind = RecordingKind.MEETING) {
             val i = Intent(context, MeetingRecorderService::class.java).setAction(action)
+                .putExtra(EXTRA_KIND, kind.wireName)
             if (id != null) i.putExtra(EXTRA_ID, id).putExtra(EXTRA_FRESH, fresh).putExtra(EXTRA_BETTER, better)
             if (action == ACTION_START || action == ACTION_RETRY) ContextCompat.startForegroundService(context, i)
             else context.startService(i)

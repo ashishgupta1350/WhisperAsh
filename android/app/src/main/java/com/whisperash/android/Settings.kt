@@ -149,6 +149,9 @@ class Settings(context: Context) {
     var meetingsUnsupportedAt: Long
         get() = prefs.getLong("meetings_unsupported_at", 0)
         set(v) = prefs.edit().putLong("meetings_unsupported_at", v).apply()
+    var diariesUnsupportedAt: Long
+        get() = prefs.getLong("diaries_unsupported_at", 0)
+        set(v) = prefs.edit().putLong("diaries_unsupported_at", v).apply()
     /** Android 13+: the notification permission is asked once, on the first meeting recording. */
     var askedNotifications: Boolean
         get() = prefs.getBoolean("asked_notifications", false)

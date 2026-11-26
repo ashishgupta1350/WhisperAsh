@@ -235,8 +235,13 @@ class MainActivity : ComponentActivity() {
     // ---------- app shell ----------
     @Composable
     private fun AppScreen() {
-        // A recording in progress opens on Meetings; everything else starts on Home.
-        var tab by remember { mutableIntStateOf(if (MeetingRecorderService.state.value.recordingId != null) TAB_MEETINGS else TAB_HOME) }
+        var tab by remember { mutableIntStateOf(MeetingRecorderService.state.value.let {
+            when {
+                it.recordingId == null -> TAB_HOME
+                it.recordingKind.isDiary -> TAB_DIARIES
+                else -> TAB_MEETINGS
+            }
+        }) }
         var settingsSub by remember { mutableStateOf<String?>(null) }
         var notesStart by remember { mutableStateOf<String?>(null) }
         var meetingStart by remember { mutableStateOf(false) }
@@ -270,7 +275,11 @@ class MainActivity : ComponentActivity() {
                         unlock = { reason, ok -> unlock(reason, ok) }, canLock = { canLock() })
                     TAB_MEETINGS -> MeetingsTab(app, dataVersion, hasMic = { hasMic() }, askMic = { askMic() },
                         askNotificationsOnce = { askNotificationsOnce() },
-                        autoRecord = meetingStart, onAutoRecordHandled = { meetingStart = false })
+                        autoRecord = meetingStart, onAutoRecordHandled = { meetingStart = false },
+                        onOpenOtherRecorder = { tab = TAB_DIARIES })
+                    TAB_DIARIES -> MeetingsTab(app, dataVersion, hasMic = { hasMic() }, askMic = { askMic() },
+                        askNotificationsOnce = { askNotificationsOnce() }, kind = RecordingKind.DIARY,
+                        onOpenOtherRecorder = { tab = TAB_MEETINGS })
                     else -> SettingsTab(dataVersion + t, settingsSub, still,
                         open = { settingsSub = it },
                         reopenSetup = { app.settings.setupDismissed = false; tab = TAB_HOME })
@@ -278,7 +287,8 @@ class MainActivity : ComponentActivity() {
             }
             com.whisperash.android.ui.BottomFade(Modifier.align(Alignment.BottomCenter), navBar)
             GlassTabBar(
-                listOf(TabItem("Home", Ic.home), TabItem("Notes", Ic.note), TabItem("Meetings", Ic.users), TabItem("Settings", Ic.gear)),
+                listOf(TabItem("Home", Ic.home), TabItem("Notes", Ic.note), TabItem("Meetings", Ic.users),
+                    TabItem("Diaries", Ic.pen), TabItem("Settings", Ic.gear)),
                 tab, { i -> if (i == TAB_SETTINGS && tab == TAB_SETTINGS) settingsSub = null; tab = i },
                 Modifier.align(Alignment.BottomCenter).navigationBarsPadding(),
             )
@@ -741,7 +751,7 @@ class MainActivity : ComponentActivity() {
                         Btn("Log out", { run { app.sync.logout() } }, kind = BtnKind.Glass, icon = Ic.logout)
                     }
                 }
-                Meta("History, words, notes, meetings and settings (language, Hindi script, cleanup, tone) sync with the WhisperAsh desktop app. Your own API keys never leave this phone.")
+                Meta("History, words, notes, meetings, diaries and settings sync with WhisperAsh on your other devices. Your own API keys never leave this phone.")
                 var current by remember { mutableStateOf("") }
                 var newPassword by remember { mutableStateOf("") }
                 SectionTitle("Change password")
@@ -830,7 +840,8 @@ class MainActivity : ComponentActivity() {
         const val TAB_HOME = 0
         const val TAB_NOTES = 1
         const val TAB_MEETINGS = 2
-        const val TAB_SETTINGS = 3
+        const val TAB_DIARIES = 3
+        const val TAB_SETTINGS = 4
         const val SUB_ACCOUNT = "account"
         const val SUB_WORDS = "words"
         const val SUB_HISTORY = "history"

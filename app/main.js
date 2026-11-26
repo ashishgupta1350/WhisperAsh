@@ -801,6 +801,13 @@ function setupWhisperAshSync() {
       }
     };
     ipcMain.handle("whisperash-get-state", () => whisperashSync.getState());
+    const noteAction = (fn) => (_e, payload) => {
+      try { return { ok: true, result: fn(payload) }; }
+      catch (err) { return { ok: false, error: err.message }; }
+    };
+    ipcMain.handle("whisperash-notes-list", noteAction(() => whisperashSync.listNotes()));
+    ipcMain.handle("whisperash-notes-save", noteAction((payload) => whisperashSync.saveNote(payload || {})));
+    ipcMain.handle("whisperash-notes-delete", noteAction((payload) => whisperashSync.deleteNote(payload || {})));
     ipcMain.handle("whisperash-register", guard((p) => whisperashSync.register(p)));
     ipcMain.handle("whisperash-login", guard((p) => whisperashSync.login(p)));
     ipcMain.handle("whisperash-logout", guard(() => whisperashSync.logout()));
@@ -906,13 +913,14 @@ function setupWhisperAshMeetings() {
     dir: path.join(app.getPath("userData"), "whisperash-meetings"),
     environmentManager,
     getAccount: () => whisperashSync.meetingAccount(),
+    getOwner: () => whisperashSync.config.userId || "",
     fetch: (url, init) => net.fetch(url, init),
     broadcast: (channel, payload) => broadcastToWindows(channel, payload),
     onChange: () => whisperashSync.requestSync("change"),
-    onStopped: (id) =>
+    onStopped: (id, kind) =>
       windowManager
         .createControlPanelWindow({ activate: true })
-        .then(() => windowManager.sendToControlPanel("whisperash-meeting-open", { id }))
+        .then(() => windowManager.sendToControlPanel("whisperash-meeting-open", { id, kind }))
         .catch((error) =>
           debugLogger.warn("Record meeting: couldn't open the dashboard", { error: error.message }, "meeting")
         ),
@@ -928,10 +936,10 @@ function setupWhisperAshMeetings() {
       return { ok: false, error: err.message };
     }
   });
-  ipcMain.handle("whisperash-meeting-start", guard(() => m.start()));
+  ipcMain.handle("whisperash-meeting-start", guard((p) => m.start(p)));
   ipcMain.handle("whisperash-meeting-stop", guard((p) => m.stop(p)));
   ipcMain.handle("whisperash-meeting-cancel", guard((p) => m.cancel(p)));
-  ipcMain.handle("whisperash-meeting-list", guard(() => m.list()));
+  ipcMain.handle("whisperash-meeting-list", guard((p) => m.list(p)));
   ipcMain.handle("whisperash-meeting-get", guard((p) => m.get(p)));
   ipcMain.handle("whisperash-meeting-delete", guard((p) => m.delete(p)));
   ipcMain.handle("whisperash-meeting-retry", guard((p) => m.retry(p)));

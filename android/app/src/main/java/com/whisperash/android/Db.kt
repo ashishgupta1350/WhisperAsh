@@ -4,6 +4,7 @@ import android.content.ContentValues
 import android.content.Context
 import android.database.sqlite.SQLiteDatabase
 import android.database.sqlite.SQLiteOpenHelper
+import androidx.core.database.sqlite.transaction
 import org.json.JSONObject
 import java.text.SimpleDateFormat
 import java.util.Calendar
@@ -89,10 +90,12 @@ data class Meeting(
     val prevSummary: String? = null,
     val prevTranscript: String? = null,
     val prevEngine: String? = null,
+    val kind: RecordingKind = RecordingKind.MEETING,
+    val diaryOwner: String = "",
 )
 
 /** Local store. Every syncable row has updated_at (ms) + dirty + deleted, last write wins. */
-class Db(context: Context) : SQLiteOpenHelper(context, "whisperash.db", null, 5) {
+class Db(context: Context) : SQLiteOpenHelper(context, "whisperash.db", null, 6) {
 
     override fun onCreate(db: SQLiteDatabase) {
         db.execSQL(
@@ -117,6 +120,7 @@ class Db(context: Context) : SQLiteOpenHelper(context, "whisperash.db", null, 5)
         createMeetings(db)
         upgradeTo4(db)
         upgradeTo5(db)
+        upgradeTo6(db)
     }
 
     override fun onUpgrade(db: SQLiteDatabase, oldVersion: Int, newVersion: Int) {
@@ -124,6 +128,13 @@ class Db(context: Context) : SQLiteOpenHelper(context, "whisperash.db", null, 5)
         if (oldVersion < 3) createMeetings(db)
         if (oldVersion < 4) upgradeTo4(db)
         if (oldVersion < 5) upgradeTo5(db)
+        if (oldVersion < 6) upgradeTo6(db)
+    }
+
+    private fun upgradeTo6(db: SQLiteDatabase) {
+        addColumn(db, "meetings", "entry_kind", "TEXT NOT NULL DEFAULT 'meetings'")
+        addColumn(db, "meetings", "diary_owner", "TEXT NOT NULL DEFAULT ''")
+        db.execSQL("CREATE INDEX IF NOT EXISTS recordings_kind_owner ON meetings(entry_kind, diary_owner, created_ms)")
     }
 
     /**
@@ -377,9 +388,10 @@ class Db(context: Context) : SQLiteOpenHelper(context, "whisperash.db", null, 5)
     }
 
     // ---------- meetings ----------
-    fun meetings(): List<Meeting> {
+    fun meetings(kind: RecordingKind = RecordingKind.MEETING, diaryOwner: String = ""): List<Meeting> {
         val out = ArrayList<Meeting>()
-        readableDatabase.query("meetings", null, "deleted = 0", null, null, null, "created_ms DESC").use { c ->
+        readableDatabase.query("meetings", null, "deleted = 0 AND entry_kind = ? AND diary_owner = ?",
+            arrayOf(kind.wireName, diaryOwner), null, null, "created_ms DESC").use { c ->
             while (c.moveToNext()) out += readMeeting(c)
         }
         return out
@@ -406,27 +418,32 @@ class Db(context: Context) : SQLiteOpenHelper(context, "whisperash.db", null, 5)
         prevSummary = c.getColumnIndex("prev_summary").takeIf { it >= 0 }?.let { c.getString(it) },
         prevTranscript = c.getColumnIndex("prev_transcript").takeIf { it >= 0 }?.let { c.getString(it) },
         prevEngine = c.getColumnIndex("prev_engine").takeIf { it >= 0 }?.let { c.getString(it) },
+        kind = RecordingKind.fromWire(c.getString(c.getColumnIndexOrThrow("entry_kind"))),
+        diaryOwner = c.getString(c.getColumnIndexOrThrow("diary_owner")),
     )
 
     /** Inserts or updates a meeting. Only finished (done / failed) meetings are marked for upload. */
-    fun saveMeeting(m: Meeting): Meeting {
-        val now = System.currentTimeMillis()
-        val saved = m.copy(updatedMs = now)
-        writableDatabase.insertWithOnConflict("meetings", null, ContentValues().apply {
+    fun saveMeeting(m: Meeting): Meeting = writableDatabase.transaction {
+        val before = meeting(m.id)
+        val now = maxOf(System.currentTimeMillis(), (before?.updatedMs ?: 0) + 1)
+        // A first sign-in can claim a local diary while its recorder is still active.
+        val saved = m.copy(updatedMs = now, diaryOwner = before?.diaryOwner ?: m.diaryOwner)
+        insertWithOnConflict("meetings", null, ContentValues().apply {
             put("id", saved.id); put("title", saved.title); put("summary", saved.summary); put("transcript", saved.transcript)
             put("engine", saved.engine); put("duration_ms", saved.durationMs); put("created_ms", saved.createdMs)
             put("updated_at", now); put("deleted", 0); put("dirty", if (saved.status in MEETING_SYNCED) 1 else 0)
             put("audio_path", saved.audioPath); put("status", saved.status); put("error", saved.error)
             put("prev_title", saved.prevTitle); put("prev_summary", saved.prevSummary)
             put("prev_transcript", saved.prevTranscript); put("prev_engine", saved.prevEngine)
+            put("diary_owner", saved.diaryOwner); put("entry_kind", saved.kind.wireName)
         }, SQLiteDatabase.CONFLICT_REPLACE)
-        return saved
+        saved
     }
 
     /** Delete = tombstone (the existing sync mechanism); the text goes right away. */
     fun deleteMeeting(id: String) {
         writableDatabase.execSQL(
-            "UPDATE meetings SET deleted = 1, dirty = 1, updated_at = ?, audio_path = NULL, transcript = '', summary = '' WHERE id = ?",
+            "UPDATE meetings SET deleted = 1, dirty = 1, updated_at = MAX(?, updated_at + 1), audio_path = NULL, transcript = '', summary = '' WHERE id = ?",
             arrayOf<Any?>(System.currentTimeMillis(), id)
         )
     }
@@ -447,12 +464,19 @@ class Db(context: Context) : SQLiteOpenHelper(context, "whisperash.db", null, 5)
         writableDatabase.delete("meetings", "id = ?", arrayOf(id))
     }
 
-    fun dirtyMeetings(limit: Int): List<Outgoing> {
+    fun claimLocalDiaries(owner: String) {
+        if (owner.isEmpty()) return
+        writableDatabase.execSQL("UPDATE meetings SET diary_owner = ? WHERE entry_kind = 'diaries' AND diary_owner = ''",
+            arrayOf(owner))
+    }
+
+    fun dirtyMeetings(limit: Int, kind: RecordingKind, diaryOwner: String): List<Outgoing> {
         val out = ArrayList<Outgoing>()
         readableDatabase.rawQuery(
             """SELECT id, title, summary, transcript, engine, duration_ms, created_ms, status, updated_at, deleted FROM meetings
-               WHERE dirty = 1 AND (deleted = 1 OR status IN ('done', 'failed')) LIMIT ?""",
-            arrayOf(limit.toString())
+               WHERE entry_kind = ? AND diary_owner = ? AND dirty = 1 AND (deleted = 1 OR status IN ('done', 'failed'))
+               ORDER BY updated_at, id LIMIT ?""",
+            arrayOf(kind.wireName, diaryOwner, limit.toString())
         ).use { c ->
             while (c.moveToNext()) {
                 val deleted = c.getInt(9) == 1
@@ -462,7 +486,7 @@ class Db(context: Context) : SQLiteOpenHelper(context, "whisperash.db", null, 5)
                     put("engine", c.getString(4)); put("durationMs", c.getLong(5)); put("createdMs", c.getLong(6))
                     put("status", c.getString(7))
                 }
-                out += Outgoing("meetings", c.getString(0), c.getLong(8), deleted, data)
+                out += Outgoing(kind.wireName, c.getString(0), c.getLong(8), deleted, data)
             }
         }
         return out
@@ -474,11 +498,13 @@ class Db(context: Context) : SQLiteOpenHelper(context, "whisperash.db", null, 5)
         )
     }
 
-    fun applyRemoteMeeting(id: String, updatedAt: Long, deleted: Boolean, data: JSONObject): Boolean {
+    fun applyRemoteMeeting(id: String, updatedAt: Long, deleted: Boolean, data: JSONObject,
+        kind: RecordingKind = RecordingKind.MEETING, diaryOwner: String = ""): Boolean {
         val db = writableDatabase
         var audio: String? = null
-        db.rawQuery("SELECT updated_at, dirty, audio_path, status, deleted FROM meetings WHERE id = ?", arrayOf(id)).use { c ->
+        db.rawQuery("SELECT updated_at, dirty, audio_path, status, deleted, entry_kind, diary_owner FROM meetings WHERE id = ?", arrayOf(id)).use { c ->
             if (c.moveToFirst()) {
+                if (c.getString(5) != kind.wireName || c.getString(6) != diaryOwner) return false
                 val localTs = c.getLong(0)
                 val dirty = c.getInt(1) == 1
                 // Never overwrite a meeting this phone is still recording or transcribing.
@@ -497,7 +523,9 @@ class Db(context: Context) : SQLiteOpenHelper(context, "whisperash.db", null, 5)
         } else {
             val status = data.optString("status", "done").takeIf { it in MEETING_SYNCED } ?: "done"
             db.insertWithOnConflict("meetings", null, ContentValues().apply {
-                put("id", id); put("title", data.optString("title", "Meeting")); put("summary", data.optString("summary", ""))
+                put("id", id); put("title", data.optString("title", kind.defaultTitle(data.optLong("createdMs", updatedAt))))
+                put("entry_kind", kind.wireName); put("diary_owner", diaryOwner)
+                put("summary", data.optString("summary", ""))
                 put("transcript", data.optString("transcript", "")); put("engine", data.optString("engine", ""))
                 put("duration_ms", data.optLong("durationMs", 0)); put("created_ms", data.optLong("createdMs", updatedAt))
                 put("updated_at", updatedAt); put("deleted", 0); put("dirty", 0)
@@ -520,8 +548,10 @@ class Db(context: Context) : SQLiteOpenHelper(context, "whisperash.db", null, 5)
         )
     }
 
-    fun dirtyMeetingCount(): Int =
-        count("SELECT COUNT(*) FROM meetings WHERE dirty = 1 AND (deleted = 1 OR status IN ('done', 'failed'))")
+    fun dirtyMeetingCount(diaryOwner: String): Int = readableDatabase.rawQuery(
+        """SELECT COUNT(*) FROM meetings WHERE (entry_kind = 'meetings' OR diary_owner = ?)
+            AND dirty = 1 AND (deleted = 1 OR status IN ('done', 'failed'))""", arrayOf(diaryOwner)
+    ).use { it.moveToFirst(); it.getInt(0) }
 
     // ---------- history ----------
     fun addHistory(

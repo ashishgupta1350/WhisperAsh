@@ -1,11 +1,9 @@
 import type React from "react";
 import { useTranslation } from "react-i18next";
-import { Home, BarChart3, MessageSquare, NotebookPen, BookOpen, Upload, Blocks, Users } from "./icons";
-import { isAgentAllowed, isPolicyActionAllowed } from "../stores/policyRules";
-import { usePolicyStore } from "../stores/policyStore";
+import { Home, NotebookPen, BookOpen, Users, Mic } from "./icons";
 
 export type ControlPanelView =
-  "home" | "insights" | "chat" | "personal-notes" | "dictionary" | "upload" | "integrations" | "meetings";
+  "home" | "insights" | "chat" | "personal-notes" | "dictionary" | "upload" | "integrations" | "meetings" | "whisperash-notes" | "diaries";
 
 export interface ControlPanelNavItem {
   id: ControlPanelView;
@@ -20,20 +18,11 @@ export interface ControlPanelNavItem {
  */
 export function useControlPanelNavItems(): ControlPanelNavItem[] {
   const { t } = useTranslation();
-  const agentAllowed = usePolicyStore(isAgentAllowed);
-  const policyActionsAllowed = usePolicyStore((state) => isPolicyActionAllowed(state));
-
-  // WhisperAsh: dictation-only. Chat, notes, uploads and integrations are hidden.
-  void agentAllowed;
-  void policyActionsAllowed;
-  void MessageSquare;
-  void NotebookPen;
-  void Upload;
-  void Blocks;
   return [
     { id: "home", label: t("sidebar.home"), icon: Home },
-    { id: "insights", label: t("sidebar.insights"), icon: BarChart3 },
     { id: "meetings", label: t("sidebar.meetings"), icon: Users },
+    { id: "whisperash-notes", label: "Notes", icon: NotebookPen },
+    { id: "diaries", label: "Diaries", icon: Mic },
     { id: "dictionary", label: t("sidebar.dictionary"), icon: BookOpen },
   ];
 }

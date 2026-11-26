@@ -455,32 +455,40 @@ private fun SelectionBar(
     app: WhisperAshApp, context: Context, view: NoteView, notes: List<Note>, onClear: () -> Unit, onMove: () -> Unit,
     unlock: (String, () -> Unit) -> Unit, canLock: () -> Boolean, onDone: () -> Unit,
 ) {
-    Row(Modifier.fillMaxWidth().padding(horizontal = Gutter).padding(top = 8.dp).glass(G.Pill, SolidColor(Color(0xEBFFFFFF))).padding(5.dp),
-        verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(4.dp)) {
-        RoundGlass(Ic.close, "Cancel selection", onClear)
-        Text("${notes.size} selected", Modifier.weight(1f).padding(start = 6.dp), style = G.ItemTitle)
-        if (view == NoteView.Bin) {
-            RoundGlass(Ic.undo, "Restore", { notes.forEach { app.db.restoreNote(it.id) }; onDone() })
-            RoundGlass(Ic.trash, "Delete for good", { notes.forEach { app.db.deleteNote(it.id) }; onDone() }, tint = G.Bad)
-            return@Row
+    Column(
+        Modifier.fillMaxWidth().padding(horizontal = Gutter).padding(top = 8.dp)
+            .glass(RoundedCornerShape(24.dp), SolidColor(Color(0xF7FFFFFF))).padding(horizontal = 8.dp, vertical = 4.dp),
+    ) {
+        Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+            RoundGlass(Ic.close, "Cancel selection", onClear)
+            Text("${notes.size} selected", Modifier.weight(1f).padding(horizontal = 8.dp),
+                style = G.ItemTitle, maxLines = 1, overflow = TextOverflow.Ellipsis)
         }
-        RoundGlass(Ic.folderMove, "Move to folder", onMove)
-        val allFav = notes.all { it.favourite }
-        RoundGlass(if (allFav) Ic.starFilled else Ic.star, if (allFav) "Remove from favourites" else "Add to favourites", {
-            notes.forEach { app.db.saveNote(it.copy(pinned = !allFav), edited = false) }; onDone()
-        }, tint = G.Accent)
-        val allLocked = notes.all { it.locked }
-        RoundGlass(if (allLocked) Ic.unlock else Ic.lock, if (allLocked) "Unlock" else "Lock", {
-            if (allLocked) unlock("Unlock ${counted(notes.size, "note")}") { notes.forEach { app.db.saveNote(it.copy(locked = false), edited = false) }; onDone() }
-            else if (!canLock()) Toast.makeText(context, "Set a screen lock (PIN, pattern or fingerprint) in the phone's settings first.", Toast.LENGTH_LONG).show()
-            else { notes.forEach { app.db.saveNote(it.copy(locked = true), edited = false) }; onDone() }
-        })
-        RoundGlass(Ic.share, "Share", {
-            val text = notes.filterNot { it.locked }.joinToString("\n\n———\n\n") { NotePrompts.shareText(it) }
-            context.startActivity(Intent.createChooser(Intent(Intent.ACTION_SEND).setType("text/plain").putExtra(Intent.EXTRA_TEXT, text), "Share notes")
-                .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
-        })
-        RoundGlass(Ic.trash, "Delete", { notes.forEach { app.db.binNote(it.id) }; onDone() }, tint = G.Bad)
+        Row(Modifier.fillMaxWidth().padding(top = 4.dp), verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.SpaceEvenly) {
+            if (view == NoteView.Bin) {
+                RoundGlass(Ic.undo, "Restore", { notes.forEach { app.db.restoreNote(it.id) }; onDone() })
+                RoundGlass(Ic.trash, "Delete for good", { notes.forEach { app.db.deleteNote(it.id) }; onDone() }, tint = G.Bad)
+                return@Row
+            }
+            RoundGlass(Ic.folderMove, "Move to folder", onMove)
+            val allFav = notes.all { it.favourite }
+            RoundGlass(if (allFav) Ic.starFilled else Ic.star, if (allFav) "Remove from favourites" else "Add to favourites", {
+                notes.forEach { app.db.saveNote(it.copy(pinned = !allFav), edited = false) }; onDone()
+            }, tint = G.Accent)
+            val allLocked = notes.all { it.locked }
+            RoundGlass(if (allLocked) Ic.unlock else Ic.lock, if (allLocked) "Unlock" else "Lock", {
+                if (allLocked) unlock("Unlock ${counted(notes.size, "note")}") { notes.forEach { app.db.saveNote(it.copy(locked = false), edited = false) }; onDone() }
+                else if (!canLock()) Toast.makeText(context, "Set a screen lock (PIN, pattern or fingerprint) in the phone's settings first.", Toast.LENGTH_LONG).show()
+                else { notes.forEach { app.db.saveNote(it.copy(locked = true), edited = false) }; onDone() }
+            })
+            RoundGlass(Ic.share, "Share", {
+                val text = notes.filterNot { it.locked }.joinToString("\n\n———\n\n") { NotePrompts.shareText(it) }
+                context.startActivity(Intent.createChooser(Intent(Intent.ACTION_SEND).setType("text/plain").putExtra(Intent.EXTRA_TEXT, text), "Share notes")
+                    .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
+            })
+            RoundGlass(Ic.trash, "Delete", { notes.forEach { app.db.binNote(it.id) }; onDone() }, tint = G.Bad)
+        }
     }
 }
 

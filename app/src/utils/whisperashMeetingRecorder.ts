@@ -18,17 +18,20 @@ const MIME = "audio/webm;codecs=opus";
 // Recorder (module level)
 // ---------------------------------------------------------------------------------------
 
+import type { WhisperAshRecordingKind } from "./whisperashSettingsSync";
+
 type Phase = MeetingRecorderPhase;
 
 interface RecorderState {
   phase: Phase;
+  kind: WhisperAshRecordingKind;
   id: string | null;
   elapsedMs: number;
   level: number;
   error: string | null;
 }
 
-let recState: RecorderState = { phase: "idle", id: null, elapsedMs: 0, level: 0, error: null };
+let recState: RecorderState = { phase: "idle", kind: "meetings", id: null, elapsedMs: 0, level: 0, error: null };
 const listeners = new Set<() => void>();
 function setRec(patch: Partial<RecorderState>) {
   const before = recState;
@@ -42,6 +45,7 @@ function publishState() {
   try {
     window.whisperash?.publishMeetingRecorderState?.({
       phase: recState.phase,
+      kind: recState.kind,
       id: recState.id,
       accumulatedMs,
       runStartedAt: recState.phase === "recording" ? runStartedAt : 0,
@@ -130,17 +134,17 @@ async function openMic(deviceId: string) {
   return navigator.mediaDevices.getUserMedia({ audio: base });
 }
 
-export async function startMeeting(deviceId: string) {
+export async function startMeeting(deviceId: string, kind: WhisperAshRecordingKind = "meetings") {
   const bridge = window.whisperash;
   if (!bridge || recState.phase !== "idle") return;
-  setRec({ phase: "starting", error: null, elapsedMs: 0, level: 0 });
+  setRec({ phase: "starting", kind, error: null, elapsedMs: 0, level: 0 });
   try {
     stream = await openMic(deviceId);
   } catch (err) {
     setRec({ phase: "idle", error: `Microphone not available: ${(err as Error).message}` });
     return;
   }
-  const res = await bridge.meetingStart();
+  const res = await bridge.meetingStart(kind);
   if (!res.ok) {
     stream.getTracks().forEach((t) => t.stop());
     stream = null;
@@ -207,7 +211,7 @@ export async function stopMeeting() {
   setRec({ phase: "stopping", level: 0, elapsedMs: durationMs });
   await finishRecorders();
   const res = id ? await window.whisperash?.meetingStop({ id, durationMs }) : null;
-  lastStoppedId = id;
+  lastStopped = id && res?.ok ? { id, kind: recState.kind } : null;
   setRec({
     phase: "idle",
     id: null,
@@ -226,12 +230,13 @@ export async function cancelMeeting() {
   setRec({ phase: "idle", id: null, elapsedMs: 0, error: null });
 }
 
-let lastStoppedId: string | null = null;
+let lastStopped: { id: string; kind: WhisperAshRecordingKind } | null = null;
 
-/** The meeting that was just stopped (once), so the page can open it. */
-export function takeLastStoppedId() {
-  const id = lastStoppedId;
-  lastStoppedId = null;
+/** The recording that was just stopped, for its own page. */
+export function takeLastStoppedId(kind: WhisperAshRecordingKind) {
+  if (lastStopped?.kind !== kind) return null;
+  const { id } = lastStopped;
+  lastStopped = null;
   return id;
 }
 

@@ -1679,11 +1679,19 @@ contextBridge.exposeInMainWorld("whisperash", {
     return () => ipcRenderer.removeListener("whisperash-history-changed", listener);
   },
   // Meeting recorder (microphone only); processing runs in the main process.
-  meetingStart: () => ipcRenderer.invoke("whisperash-meeting-start"),
+  notesList: () => ipcRenderer.invoke("whisperash-notes-list"),
+  notesSave: (payload) => ipcRenderer.invoke("whisperash-notes-save", payload),
+  notesDelete: (payload) => ipcRenderer.invoke("whisperash-notes-delete", payload),
+  onNotesChanged: (cb) => {
+    const listener = () => cb();
+    ipcRenderer.on("whisperash-notes-changed", listener);
+    return () => ipcRenderer.removeListener("whisperash-notes-changed", listener);
+  },
+  meetingStart: (kind) => ipcRenderer.invoke("whisperash-meeting-start", { kind }),
   meetingAppend: (payload) => ipcRenderer.invoke("whisperash-meeting-append", payload),
   meetingStop: (payload) => ipcRenderer.invoke("whisperash-meeting-stop", payload),
   meetingCancel: (id) => ipcRenderer.invoke("whisperash-meeting-cancel", { id }),
-  meetingList: () => ipcRenderer.invoke("whisperash-meeting-list"),
+  meetingList: (kind) => ipcRenderer.invoke("whisperash-meeting-list", { kind }),
   meetingGet: (id) => ipcRenderer.invoke("whisperash-meeting-get", { id }),
   meetingDelete: (id) => ipcRenderer.invoke("whisperash-meeting-delete", { id }),
   meetingRetry: (id) => ipcRenderer.invoke("whisperash-meeting-retry", { id }),
