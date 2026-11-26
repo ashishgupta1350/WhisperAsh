@@ -30,8 +30,7 @@ export interface SettingsNavInput {
 // intelligence, agentMode) — they now collapse into two: speechToText + llms.
 // Legacy deep-links land on the matching sub-tab via LEGACY_SUB_TAB.
 // "dictationAgent" (the Home GPU banner) and "noteFormatting" (a note action's
-// error toast) are live deep-links. The Usage shortcut opens the account's usage section.
-// "workspace" was the
+// error toast) are live deep-links, not legacy aliases. "workspace" was the
 // single workspace page before it split into General, People and Developer.
 export const SECTION_ALIASES: Record<string, SettingsSectionType> = {
   aiModels: "llms",
@@ -50,7 +49,6 @@ export const SECTION_ALIASES: Record<string, SettingsSectionType> = {
   permissions: "privacyData",
   developer: "system",
   workspace: "workspaceGeneral",
-  whisperashUsage: "account",
 };
 
 export const LEGACY_SUB_TAB: Record<string, string> = {
@@ -65,7 +63,6 @@ export const LEGACY_SUB_TAB: Record<string, string> = {
   agentConfig: "chatIntelligence",
   aiModels: "dictationCleanup",
   prompts: "dictationCleanup",
-  whisperashUsage: "usage",
 };
 
 const WORKSPACE_SECTIONS: ReadonlySet<SettingsSectionType> = new Set([

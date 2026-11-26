@@ -1,6 +1,6 @@
 import type React from "react";
 import { useTranslation } from "react-i18next";
-import { Home, NotebookPen, BookOpen, Users, Mic } from "./icons";
+import { BarChart3, Home, NotebookPen, BookOpen, Users, Mic } from "./icons";
 
 export type ControlPanelView =
   "home" | "insights" | "chat" | "personal-notes" | "dictionary" | "upload" | "integrations" | "meetings" | "whisperash-notes" | "diaries";
@@ -9,6 +9,7 @@ export interface ControlPanelNavItem {
   id: ControlPanelView;
   label: string;
   icon: React.ComponentType<{ size?: number; className?: string }>;
+  footer?: boolean;
 }
 
 /**
@@ -24,5 +25,6 @@ export function useControlPanelNavItems(): ControlPanelNavItem[] {
     { id: "whisperash-notes", label: "Notes", icon: NotebookPen },
     { id: "diaries", label: "Diaries", icon: Mic },
     { id: "dictionary", label: t("sidebar.dictionary"), icon: BookOpen },
+    { id: "insights", label: t("sidebar.usage", { defaultValue: "Usage" }), icon: BarChart3, footer: true },
   ];
 }

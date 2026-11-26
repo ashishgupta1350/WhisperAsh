@@ -1,5 +1,5 @@
 import React, { useState } from "react";
-import { BarChart3, Gift, Lock, Settings, ShieldCheck, HelpCircle, X, Zap } from "./icons";
+import { Gift, Lock, Settings, ShieldCheck, HelpCircle, X, Zap } from "./icons";
 import logoIcon from "../assets/icon.png";
 import { useTranslation } from "react-i18next";
 import { cn } from "./lib/utils";
@@ -7,7 +7,7 @@ import SupportDropdown from "./ui/SupportDropdown";
 import { Button } from "./ui/button";
 import WorkspaceSwitcher from "./WorkspaceSwitcher";
 import type { UpsellDecision } from "../lib/upsell";
-import { useControlPanelNavItems, type ControlPanelView } from "./controlPanelNav";
+import { useControlPanelNavItems, type ControlPanelNavItem, type ControlPanelView } from "./controlPanelNav";
 
 export type { ControlPanelView };
 
@@ -23,7 +23,6 @@ interface ControlPanelSidebarProps {
   chatNeedsAttention?: boolean;
   onViewChange: (view: ControlPanelView) => void;
   onOpenSettings: () => void;
-  onOpenUsage?: () => void;
   onOpenReferrals?: () => void;
   onUpgrade?: () => void;
   isOverLimit?: boolean;
@@ -39,7 +38,6 @@ export default function ControlPanelSidebar({
   chatNeedsAttention = false,
   onViewChange,
   onOpenSettings,
-  onOpenUsage,
   onOpenReferrals,
   onUpgrade,
   isOverLimit,
@@ -57,6 +55,54 @@ export default function ControlPanelSidebar({
   const showUpgradeBanner = upsell === "show" && !showLimitBanner && !upgradeDismissed;
 
   const navItems = useControlPanelNavItems();
+  const renderNavItem = (item: ControlPanelNavItem) => {
+    const Icon = item.icon;
+    const isActive = activeView === item.id;
+
+    return (
+      <button
+        key={item.id}
+        type="button"
+        aria-current={isActive ? "page" : undefined}
+        onClick={() => onViewChange(item.id)}
+        className={cn(
+          "group relative flex items-center gap-2.5 w-full h-8 px-2.5 rounded-md outline-none transition-colors duration-150 text-start",
+          "focus-visible:ring-1 focus-visible:ring-primary/30",
+          isActive
+            ? "bg-primary/8 dark:bg-primary/10"
+            : "hover:bg-foreground/4 dark:hover:bg-white/4 active:bg-foreground/6"
+        )}
+      >
+        <Icon
+          size={16}
+          className={cn(
+            "shrink-0 transition-colors duration-150",
+            isActive
+              ? "text-primary"
+              : "text-foreground/70 group-hover:text-foreground/90 dark:text-foreground/65 dark:group-hover:text-foreground/85"
+          )}
+        />
+        <span
+          className={cn(
+            "text-[13px] transition-colors duration-150",
+            isActive
+              ? "text-foreground font-medium"
+              : "text-foreground/90 group-hover:text-foreground dark:text-foreground/85 dark:group-hover:text-foreground"
+          )}
+        >
+          {item.label}
+        </span>
+        {item.id === "chat" && chatNeedsAttention && (
+          <span
+            role="status"
+            aria-label={t("agentWindow.waitingForAnswer")}
+            title={t("agentWindow.waitingForAnswer")}
+            className="ms-auto size-1.5 shrink-0 rounded-full bg-primary"
+          />
+        )}
+      </button>
+    );
+  };
 
   return (
     <div className="w-48 h-full shrink-0 flex flex-col bg-surface-window">
@@ -66,52 +112,7 @@ export default function ControlPanelSidebar({
       />
 
       <nav className="flex flex-col gap-0.5 px-2 pt-2 pb-2">
-        {navItems.map((item) => {
-          const Icon = item.icon;
-          const isActive = activeView === item.id;
-
-          return (
-            <button
-              key={item.id}
-              onClick={() => onViewChange(item.id)}
-              className={cn(
-                "group relative flex items-center gap-2.5 w-full h-8 px-2.5 rounded-md outline-none transition-colors duration-150 text-start",
-                "focus-visible:ring-1 focus-visible:ring-primary/30",
-                isActive
-                  ? "bg-primary/8 dark:bg-primary/10"
-                  : "hover:bg-foreground/4 dark:hover:bg-white/4 active:bg-foreground/6"
-              )}
-            >
-              <Icon
-                size={16}
-                className={cn(
-                  "shrink-0 transition-colors duration-150",
-                  isActive
-                    ? "text-primary"
-                    : "text-foreground/70 group-hover:text-foreground/90 dark:text-foreground/65 dark:group-hover:text-foreground/85"
-                )}
-              />
-              <span
-                className={cn(
-                  "text-[13px] transition-colors duration-150",
-                  isActive
-                    ? "text-foreground font-medium"
-                    : "text-foreground/90 group-hover:text-foreground dark:text-foreground/85 dark:group-hover:text-foreground"
-                )}
-              >
-                {item.label}
-              </span>
-              {item.id === "chat" && chatNeedsAttention && (
-                <span
-                  role="status"
-                  aria-label={t("agentWindow.waitingForAnswer")}
-                  title={t("agentWindow.waitingForAnswer")}
-                  className="ms-auto size-1.5 shrink-0 rounded-full bg-primary"
-                />
-              )}
-            </button>
-          );
-        })}
+        {navItems.filter((item) => !item.footer).map(renderNavItem)}
       </nav>
 
       <div className="flex-1" />
@@ -194,12 +195,7 @@ export default function ControlPanelSidebar({
           </button>
         )}
 
-        {onOpenUsage && (
-          <button type="button" onClick={onOpenUsage} className={rowButtonClass}>
-            <BarChart3 size={16} className={rowIconClass} />
-            <span className={rowLabelClass}>{t("sidebar.usage", { defaultValue: "Usage" })}</span>
-          </button>
-        )}
+        {navItems.filter((item) => item.footer).map(renderNavItem)}
 
         <button
           onClick={onOpenSettings}

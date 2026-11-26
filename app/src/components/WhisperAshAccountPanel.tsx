@@ -1,6 +1,6 @@
 // WhisperAsh: account (Cloudflare Worker), speech engine (WhisperAsh account or own keys), sync
 // status, Groq usage and the timing of the last dictation.
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useState } from "react";
 import { Button } from "./ui/button";
 import { Input } from "./ui/input";
 import { SectionHeader, SettingsPanel, SettingsPanelRow, SettingsRow } from "./ui/SettingsSection";
@@ -66,12 +66,9 @@ const TIMING_LABELS: Array<[string, string]> = [
   ["totalAfterReleaseMs", "Key release → text"],
 ];
 
-export default function WhisperAshAccountPanel({ focusUsage = false }: { focusUsage?: boolean }) {
+export default function WhisperAshAccountPanel() {
   const bridge = window.whisperash;
   const [state, setState] = useState<WhisperAshState | null>(null);
-  const usageRef = useRef<HTMLDivElement>(null);
-  const account = state?.engine?.account ?? true;
-  const usageReady = state !== null;
   const [serverUrl, setServerUrl] = useState("");
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
@@ -126,15 +123,6 @@ export default function WhisperAshAccountPanel({ focusUsage = false }: { focusUs
     };
   }, [bridge]);
 
-  useEffect(() => {
-    if (!focusUsage || !usageReady) return;
-    const frame = requestAnimationFrame(() => {
-      usageRef.current?.focus({ preventScroll: true });
-      usageRef.current?.scrollIntoView({ block: "start" });
-    });
-    return () => cancelAnimationFrame(frame);
-  }, [focusUsage, usageReady, account]);
-
   if (!bridge) return <div className="text-sm">WhisperAsh bridge not available.</div>;
 
   const run = async (fn: () => Promise<{ ok: boolean; error?: string; state: WhisperAshState }>, okText: string) => {
@@ -156,6 +144,7 @@ export default function WhisperAshAccountPanel({ focusUsage = false }: { focusUs
 
   const usage = state?.usage;
   const timing = state?.lastTiming;
+  const account = state?.engine?.account ?? true;
   const plan = state?.plan;
 
   return (
@@ -342,18 +331,10 @@ export default function WhisperAshAccountPanel({ focusUsage = false }: { focusUs
             </div>
           </SettingsRow>
         </SettingsPanelRow>
-        {account && (state?.signedIn || focusUsage) ? (
+        {account && state?.signedIn ? (
           <SettingsPanelRow>
-            <div
-              ref={usageRef}
-              tabIndex={focusUsage ? -1 : undefined}
-              role="region"
-              aria-label="Daily usage"
-              className="w-full scroll-mt-4 py-1 outline-none"
-            >
-              {state && !state.signedIn ? (
-                <div className="text-xs text-muted-foreground">Sign in to see your daily usage.</div>
-              ) : plan ? (
+            <div className="w-full py-1">
+              {plan ? (
                 plan.status === "blocked" ? (
                   <div className="text-xs">Your account is paused. Contact the WhisperAsh admin.</div>
                 ) : plan.ownKeys?.groq ? (
@@ -520,13 +501,7 @@ export default function WhisperAshAccountPanel({ focusUsage = false }: { focusUs
       </SettingsPanel>
 
       {!account ? (
-        <div
-          ref={usageRef}
-          tabIndex={focusUsage ? -1 : undefined}
-          role="region"
-          aria-label="Daily usage"
-          className="space-y-5 scroll-mt-4 outline-none"
-        >
+        <>
           <SectionHeader
             title="Groq free-tier usage (this PC)"
             description="Counted locally. Each Whisper request is billed as at least 10 seconds of audio. Limits from console.groq.com/docs/rate-limits."
@@ -613,7 +588,7 @@ export default function WhisperAshAccountPanel({ focusUsage = false }: { focusUs
               </SettingsPanelRow>
             ) : null}
           </SettingsPanel>
-        </div>
+        </>
       ) : null}
 
       <SectionHeader title="Last dictation timing" description="Time per stage after you release the hotkey." />
