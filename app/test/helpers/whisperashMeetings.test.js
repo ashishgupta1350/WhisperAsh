@@ -451,6 +451,8 @@ test("a diary uses Gemini, has a dated title, and syncs only within its account"
   store.stop({ id, durationMs: 5000 });
   await waitFor(store, id);
   const diary = store.get({ id });
+  assert.ok(fs.existsSync(path.join(dir, ".diaries", id, "meeting.json")));
+  assert.equal(fs.existsSync(path.join(dir, id)), false);
   assert.match(diary.title, /\d{4} · Walk in the park$/);
   assert.equal(diary.summary, "I went to the park.");
   assert.deepEqual(calls.map((c) => c.kind), ["geminiAudio", "geminiText"]);
