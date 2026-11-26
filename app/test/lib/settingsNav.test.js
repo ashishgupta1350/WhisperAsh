@@ -197,3 +197,12 @@ test("a meeting's refusal opens Speech-to-Text on its Note Recording tab", async
   assert.equal(nav.SECTION_ALIASES.noteRecording, "speechToText");
   assert.equal(nav.LEGACY_SUB_TAB.noteRecording, "noteRecording");
 });
+
+test("WhisperAsh Usage opens the usage portion of Account settings", async () => {
+  const { buildSettingsNav, resolveSettingsSection, LEGACY_SUB_TAB } = await load();
+  for (const isSignedIn of [true, false]) {
+    const nav = buildSettingsNav({ isSignedIn, hasWorkspace: false, canManageSettings: false });
+    assert.equal(resolveSettingsSection("whisperashUsage", nav), "account");
+  }
+  assert.equal(LEGACY_SUB_TAB.whisperashUsage, "usage");
+});

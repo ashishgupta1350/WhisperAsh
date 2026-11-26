@@ -2223,7 +2223,7 @@ export default function SettingsPage({
   const renderSectionContent = () => {
     switch (activeSection) {
       case "account":
-        return <WhisperAshAccountPanel />;
+        return <WhisperAshAccountPanel focusUsage={initialSubTab === "usage"} />;
 
       case "plansBilling":
         return (

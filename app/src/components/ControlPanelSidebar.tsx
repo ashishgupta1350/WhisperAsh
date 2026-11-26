@@ -1,5 +1,5 @@
 import React, { useState } from "react";
-import { Gift, Lock, Settings, ShieldCheck, HelpCircle, X, Zap } from "./icons";
+import { BarChart3, Gift, Lock, Settings, ShieldCheck, HelpCircle, X, Zap } from "./icons";
 import logoIcon from "../assets/icon.png";
 import { useTranslation } from "react-i18next";
 import { cn } from "./lib/utils";
@@ -23,6 +23,7 @@ interface ControlPanelSidebarProps {
   chatNeedsAttention?: boolean;
   onViewChange: (view: ControlPanelView) => void;
   onOpenSettings: () => void;
+  onOpenUsage?: () => void;
   onOpenReferrals?: () => void;
   onUpgrade?: () => void;
   isOverLimit?: boolean;
@@ -38,6 +39,7 @@ export default function ControlPanelSidebar({
   chatNeedsAttention = false,
   onViewChange,
   onOpenSettings,
+  onOpenUsage,
   onOpenReferrals,
   onUpgrade,
   isOverLimit,
@@ -189,6 +191,13 @@ export default function ControlPanelSidebar({
           >
             <Gift size={16} className={rowIconClass} />
             <span className={rowLabelClass}>{t("sidebar.referral")}</span>
+          </button>
+        )}
+
+        {onOpenUsage && (
+          <button type="button" onClick={onOpenUsage} className={rowButtonClass}>
+            <BarChart3 size={16} className={rowIconClass} />
+            <span className={rowLabelClass}>{t("sidebar.usage", { defaultValue: "Usage" })}</span>
           </button>
         )}
 

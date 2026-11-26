@@ -1321,6 +1321,14 @@ export default function ControlPanel({ initialSettingsSection }: ControlPanelPro
               setSettingsSection(undefined);
               setShowSettings(true);
             }}
+            onOpenUsage={
+              window.whisperash
+                ? () => {
+                    setSettingsSection("whisperashUsage");
+                    setShowSettings(true);
+                  }
+                : undefined
+            }
             onOpenReferrals={() => setShowReferrals(true)}
             onUpgrade={() => {
               setSettingsSection("plansBilling");
