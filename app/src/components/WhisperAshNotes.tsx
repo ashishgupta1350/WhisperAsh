@@ -149,7 +149,7 @@ export default function WhisperAshNotes() {
             </button>
           ))}
         </section>
-        {draft && (
+        {draft ? (
           <section aria-label="Note editor" className="min-w-0 space-y-3 rounded-xl border border-border bg-card p-4">
             {canEdit ? (
               <>
@@ -171,6 +171,13 @@ export default function WhisperAshNotes() {
                 {selected?.locked ? "Unlock this note on your Android phone to edit it here." : "This note was removed on another device."}
               </p>
             )}
+          </section>
+        ) : (
+          <section
+            aria-label="Note preview"
+            className="hidden min-h-64 items-center justify-center self-start rounded-xl border border-border/60 bg-card/50 p-6 text-center text-sm text-muted-foreground md:flex"
+          >
+            {notes.length ? "Select a note to view it." : "Create a note to get started."}
           </section>
         )}
       </div>

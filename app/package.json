@@ -1,6 +1,6 @@
 {
   "name": "open-whispr",
-  "version": "1.12.2",
+  "version": "1.12.3",
   "description": "WhisperAsh: Windows voice dictation with Groq Whisper and Cloudflare sync (fork of OpenWhispr)",
   "main": "main.js",
   "private": true,

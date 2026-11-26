@@ -367,6 +367,15 @@ export default function WhisperAshMeetings({ openMeeting, kind = "meetings", onO
               </div>
             ) : null}
           </div>
+        ) : diary ? (
+          <section
+            aria-label="Diary entry preview"
+            className="hidden min-h-64 items-center justify-center self-start rounded-xl border border-border/60 bg-card/50 p-6 text-center text-sm text-muted-foreground md:flex"
+          >
+            {selectedId
+              ? "Loading diary entry…"
+              : meetings.length ? "Select a diary entry to view it." : "Record a diary entry to get started."}
+          </section>
         ) : null}
       </div>
     </div>
