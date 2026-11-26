@@ -116,12 +116,13 @@ object G {
     val TintTeal = Brush.linearGradient(listOf(Color(0xD9D6F0EC), Color(0x9EEEF8F6)))
     val TintLilac = Brush.linearGradient(listOf(Color(0xD9EEECFC), Color(0x9EF6F4FC)))
 
-    val LargeTitle = TextStyle(fontSize = 34.sp, fontWeight = FontWeight.ExtraBold, letterSpacing = (-0.02).em, lineHeight = 38.sp, color = Ink)
-    val SectionTitle = TextStyle(fontSize = 21.sp, fontWeight = FontWeight.ExtraBold, letterSpacing = (-0.01).em, color = Ink)
-    val Body = TextStyle(fontSize = 17.sp, lineHeight = 24.sp, color = Ink, fontFeatureSettings = "tnum")
-    val ItemTitle = TextStyle(fontSize = 16.5.sp, fontWeight = FontWeight.Bold, color = Ink, fontFeatureSettings = "tnum")
-    val Sub = TextStyle(fontSize = 14.sp, color = Ink3, fontFeatureSettings = "tnum")
-    val Meta = TextStyle(fontSize = 13.sp, color = Ink3, fontFeatureSettings = "tnum")
+    val LargeTitle = TextStyle(fontSize = 31.sp, fontWeight = FontWeight.ExtraBold, letterSpacing = (-0.02).em, lineHeight = 35.sp, color = Ink)
+    val EntryTitle = LargeTitle.copy(fontSize = 26.sp, lineHeight = 30.sp)
+    val SectionTitle = TextStyle(fontSize = 19.sp, fontWeight = FontWeight.ExtraBold, letterSpacing = (-0.01).em, color = Ink)
+    val Body = TextStyle(fontSize = 15.5.sp, lineHeight = 22.sp, color = Ink, fontFeatureSettings = "tnum")
+    val ItemTitle = TextStyle(fontSize = 15.sp, fontWeight = FontWeight.Bold, color = Ink, fontFeatureSettings = "tnum")
+    val Sub = TextStyle(fontSize = 13.sp, color = Ink3, fontFeatureSettings = "tnum")
+    val Meta = TextStyle(fontSize = 12.5.sp, color = Ink3, fontFeatureSettings = "tnum")
 }
 
 enum class Tone(val fg: Color, val bg: Color) {
@@ -242,7 +243,7 @@ fun GlassCard(
 
 // ---------- text ----------
 @Composable fun LargeTitle(text: String, modifier: Modifier = Modifier) = Text(text, modifier, style = G.LargeTitle)
-@Composable fun Subtitle(text: String, modifier: Modifier = Modifier) = Text(text, modifier, style = G.Body.copy(fontSize = 16.sp, color = G.Ink2))
+@Composable fun Subtitle(text: String, modifier: Modifier = Modifier) = Text(text, modifier, style = G.Body.copy(color = G.Ink2))
 @Composable fun Meta(text: String, modifier: Modifier = Modifier, color: Color = G.Ink3, maxLines: Int = Int.MAX_VALUE) =
     Text(text, modifier, style = G.Meta.copy(color = color), maxLines = maxLines, overflow = TextOverflow.Ellipsis)
 
@@ -306,7 +307,7 @@ fun Btn(
             Icon(icon, null, Modifier.size(19.dp), tint = c)
             Spacer(Modifier.width(7.dp))
         }
-        Text(text, style = TextStyle(fontSize = if (big) 17.sp else 16.sp, fontWeight = FontWeight.SemiBold, color = c), maxLines = 1)
+        Text(text, style = TextStyle(fontSize = if (big) 16.sp else 15.sp, fontWeight = FontWeight.SemiBold, color = c), maxLines = 1)
     }
 }
 
@@ -325,7 +326,7 @@ fun BackBar(parent: String, onBack: () -> Unit, modifier: Modifier = Modifier, t
         Row(Modifier.clip(G.Pill).clickable(onClick = onBack).padding(end = 10.dp), verticalAlignment = Alignment.CenterVertically) {
             RoundGlass(Ic.back, "Back", onBack)
             Spacer(Modifier.width(10.dp))
-            Text(parent, style = G.Body.copy(fontSize = 17.sp, fontWeight = FontWeight.Medium, color = G.Ink))
+            Text(parent, style = G.Body.copy(fontWeight = FontWeight.Medium, color = G.Ink))
         }
         Spacer(Modifier.weight(1f))
         trailing()
@@ -448,7 +449,7 @@ fun GlassField(
     password: Boolean = false,
     keyboardType: KeyboardType = KeyboardType.Text,
     minHeight: Dp = 48.dp,
-    textStyle: TextStyle = G.Body.copy(fontSize = 16.sp),
+    textStyle: TextStyle = G.Body,
 ) {
     Column(modifier) {
         if (label != null) Text(label, Modifier.padding(start = 4.dp, bottom = 6.dp), style = G.Sub.copy(fontWeight = FontWeight.SemiBold, color = G.Ink2))
@@ -570,7 +571,7 @@ private fun SheetPanel(title: String, onDismiss: () -> Unit, content: @Composabl
         ) {
             Box(Modifier.align(Alignment.CenterHorizontally).size(width = 40.dp, height = 5.dp).clip(G.Pill).background(Color(0x333C5064)))
             Row(Modifier.fillMaxWidth().padding(top = 10.dp, bottom = 8.dp), verticalAlignment = Alignment.CenterVertically) {
-                Text(title, Modifier.weight(1f), style = G.SectionTitle.copy(fontSize = 19.sp))
+                Text(title, Modifier.weight(1f), style = G.SectionTitle)
                 RoundGlass(Ic.close, "Close", onDismiss)
             }
             content()
@@ -589,7 +590,7 @@ fun SheetRow(label: String, icon: ImageVector? = null, tone: Tone = Tone.Neutral
     ) {
         if (icon != null) { IconSquare(icon, tone, 34.dp); Spacer(Modifier.width(12.dp)) }
         Column(Modifier.weight(1f)) {
-            Text(label, style = G.ItemTitle.copy(fontSize = 16.sp, color = if (tone == Tone.Ai) G.Ai else if (tone == Tone.Bad) G.Bad else G.Ink))
+            Text(label, style = G.ItemTitle.copy(color = if (tone == Tone.Ai) G.Ai else if (tone == Tone.Bad) G.Bad else G.Ink))
             if (sub != null) Text(sub, style = G.Sub)
         }
         if (selected) Icon(Ic.check, null, Modifier.size(20.dp), tint = G.Accent)

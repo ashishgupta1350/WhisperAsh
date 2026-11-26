@@ -414,14 +414,14 @@ private fun NoteCard(n: Note, sort: NoteSort, folder: Folder?, selected: Boolean
     ) {
         Row(verticalAlignment = Alignment.Top) {
             if (folder != null) { Box(Modifier.padding(top = 6.dp).size(8.dp).clip(CircleShape).background(folderColor(folder.color))); Spacer(Modifier.width(6.dp)) }
-            Text(n.title.ifBlank { "Untitled" }, Modifier.weight(1f), style = G.ItemTitle.copy(fontSize = 15.5.sp, color = if (n.title.isBlank()) G.Ink3 else G.Ink),
+            Text(n.title.ifBlank { "Untitled" }, Modifier.weight(1f), style = G.ItemTitle.copy(color = if (n.title.isBlank()) G.Ink3 else G.Ink),
                 maxLines = 2, overflow = TextOverflow.Ellipsis)
             if (selected) Icon(Ic.check, "Selected", Modifier.padding(start = 4.dp).size(18.dp), tint = G.Accent)
         }
         Spacer(Modifier.height(6.dp))
         if (n.locked) Row(verticalAlignment = Alignment.CenterVertically) {
             Icon(Ic.lock, null, Modifier.size(15.dp), tint = G.Ink3); Spacer(Modifier.width(6.dp)); Meta("Locked")
-        } else NoteBodyView(n.body, fontSize = 13.5.sp, maxBlocks = maxBlocks)
+        } else NoteBodyView(n.body, fontSize = G.Sub.fontSize, maxBlocks = maxBlocks)
         Spacer(Modifier.height(8.dp))
         Row(verticalAlignment = Alignment.CenterVertically) {
             Meta(if (inBin) counted(NoteQuery.daysLeftInBin(n, now), "day") + " left" else dateText(NoteQuery.dateOf(n, sort), now), Modifier.weight(1f), maxLines = 1)
@@ -439,7 +439,7 @@ private fun SimpleRow(n: Note, sort: NoteSort, folder: Folder?, selected: Boolea
         .combinedClickable(onClick = onTap, onLongClick = onLong).padding(horizontal = 14.dp, vertical = 12.dp)) {
         Row(verticalAlignment = Alignment.CenterVertically) {
             if (folder != null) { Box(Modifier.size(8.dp).clip(CircleShape).background(folderColor(folder.color))); Spacer(Modifier.width(8.dp)) }
-            Text(n.title.ifBlank { "Untitled" }, Modifier.weight(1f), style = G.ItemTitle.copy(fontSize = 15.5.sp), maxLines = 1, overflow = TextOverflow.Ellipsis)
+            Text(n.title.ifBlank { "Untitled" }, Modifier.weight(1f), style = G.ItemTitle, maxLines = 1, overflow = TextOverflow.Ellipsis)
             if (n.audio.isNotEmpty()) Icon(Ic.mic, null, Modifier.padding(start = 6.dp).size(14.dp), tint = G.Ai)
             if (n.locked) Icon(Ic.lock, null, Modifier.padding(start = 6.dp).size(14.dp), tint = G.Ink3)
             if (n.favourite) Icon(Ic.starFilled, null, Modifier.padding(start = 6.dp).size(14.dp), tint = G.Accent)
@@ -528,7 +528,7 @@ private fun NotesDrawer(app: WhisperAshApp, all: List<Note>, folders: List<Folde
                 ) {
                     Icon(Ic.folder, null, Modifier.size(20.dp), tint = folderColor(f.color).copy(red = folderColor(f.color).red * .7f, green = folderColor(f.color).green * .7f, blue = folderColor(f.color).blue * .7f))
                     Spacer(Modifier.width(10.dp))
-                    Text(f.name, Modifier.weight(1f), style = G.ItemTitle.copy(fontSize = 15.5.sp), maxLines = 1, overflow = TextOverflow.Ellipsis)
+                    Text(f.name, Modifier.weight(1f), style = G.ItemTitle, maxLines = 1, overflow = TextOverflow.Ellipsis)
                     Meta("${live.count { it.folderId == f.id }}")
                     Icon(Ic.more, "Folder options", Modifier.padding(start = 4.dp).size(36.dp).clip(CircleShape).clickable { editing = f }.padding(8.dp), tint = G.Ink3)
                 }
@@ -829,8 +829,8 @@ private fun NoteEditor(
             }
             Column(Modifier.weight(1f).verticalScroll(rememberScrollState()).padding(horizontal = Gutter)) {
                 BasicTextField(title, { title = it; history.push(it to body.text); hv++ }, Modifier.fillMaxWidth().padding(top = 4.dp),
-                    textStyle = G.LargeTitle.copy(fontSize = 30.sp, lineHeight = 34.sp), cursorBrush = SolidColor(G.Accent),
-                    decorationBox = { inner -> Box { if (title.isEmpty()) Text("Title", style = G.LargeTitle.copy(fontSize = 30.sp, color = G.Ink3)); inner() } })
+                    textStyle = G.EntryTitle, cursorBrush = SolidColor(G.Accent),
+                    decorationBox = { inner -> Box { if (title.isEmpty()) Text("Title", style = G.EntryTitle.copy(color = G.Ink3)); inner() } })
                 Row(Modifier.padding(top = 6.dp), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                     Meta("Edited " + DateFormat.getTimeInstance(DateFormat.SHORT).format(Date(note.editedMs)) +
                         if (System.currentTimeMillis() - note.editedMs > 86_400_000L) ", " + DateFormat.getDateInstance(DateFormat.MEDIUM).format(Date(note.editedMs)) else "")

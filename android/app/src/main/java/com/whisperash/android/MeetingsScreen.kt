@@ -292,7 +292,7 @@ private fun MeetingDetail(
             statusChip(m, progress)?.let { (t, tone) -> Chip(t, tone) }
             if (edited) { Spacer(Modifier.width(8.dp)); Btn("Save", { saveTitle() }, kind = BtnKind.Tint, icon = Ic.check) }
         }
-        BasicTextField(title, { title = it }, Modifier.fillMaxWidth(), textStyle = G.LargeTitle.copy(fontSize = 28.sp, lineHeight = 32.sp),
+        BasicTextField(title, { title = it }, Modifier.fillMaxWidth(), textStyle = G.EntryTitle,
             cursorBrush = SolidColor(G.Accent))
         Meta(MeetingText.metaLine(m), Modifier.padding(top = 4.dp))
         Spacer(Modifier.height(12.dp))
@@ -380,13 +380,13 @@ private fun MeetingDetail(
             GlassCard(fill = G.TintTeal) {
                 AiLabel("Written by AI from the transcript")
                 Spacer(Modifier.height(8.dp))
-                SelectionContainer { Text(m.summary.trim(), style = G.Body.copy(fontSize = 16.sp, lineHeight = 23.sp)) }
+                SelectionContainer { Text(m.summary.trim(), style = G.Body) }
             }
         }
         if (m.transcript.isNotBlank()) {
             SectionTitle("Transcript")
             GlassCard {
-                SelectionContainer { Text(m.transcript, style = G.Body.copy(fontSize = 15.sp, lineHeight = 22.sp, color = G.Ink2)) }
+                SelectionContainer { Text(m.transcript, style = G.Body.copy(color = G.Ink2)) }
             }
         }
         if (m.status == "done" && m.audioPath != null) {

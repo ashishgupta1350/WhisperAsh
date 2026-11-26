@@ -321,7 +321,7 @@ class MainActivity : ComponentActivity() {
             if (doneCount < steps.size && !dismissed) GlassCard(fill = G.TintPeach) {
                 Row(verticalAlignment = Alignment.CenterVertically) {
                     Column(Modifier.weight(1f)) {
-                        Text("Finish setting up", style = G.SectionTitle.copy(fontSize = 19.sp))
+                        Text("Finish setting up", style = G.SectionTitle)
                         Meta("$doneCount of ${steps.size} done")
                     }
                     RoundGlass(Ic.close, "Hide setup", { app.settings.setupDismissed = true; dismissed = true })
@@ -342,7 +342,7 @@ class MainActivity : ComponentActivity() {
                     IconSquare(Ic.note, Tone.Accent, 44.dp)
                     Spacer(Modifier.width(12.dp))
                     Column(Modifier.weight(1f)) {
-                        Text("Take notes", style = G.ItemTitle.copy(fontSize = 19.sp))
+                        Text("Take notes", style = G.SectionTitle.copy(fontSize = 17.sp))
                         Meta(if (noteCount == 0) "Say it; it's written down the way you said it" else counted(noteCount, "note") + " · lists and to-dos kept as you said them")
                     }
                 }
@@ -358,7 +358,7 @@ class MainActivity : ComponentActivity() {
                     IconSquare(Ic.users, Tone.Info, 44.dp)
                     Spacer(Modifier.width(12.dp))
                     Column(Modifier.weight(1f)) {
-                        Text("Meetings", style = G.ItemTitle.copy(fontSize = 19.sp))
+                        Text("Meetings", style = G.SectionTitle.copy(fontSize = 17.sp))
                         Meta("Record a meeting: transcript with speakers, plus a summary")
                     }
                 }
@@ -371,7 +371,7 @@ class MainActivity : ComponentActivity() {
                 Row(verticalAlignment = Alignment.CenterVertically) {
                     IconSquare(Ic.history, Tone.Lilac, 44.dp)
                     Spacer(Modifier.width(12.dp))
-                    Text("History", Modifier.weight(1f), style = G.ItemTitle.copy(fontSize = 19.sp))
+                    Text("History", Modifier.weight(1f), style = G.SectionTitle.copy(fontSize = 17.sp))
                     Text("See all", Modifier.clip(G.Pill).clickable { openSettings(SUB_HISTORY) }.padding(10.dp),
                         style = G.Body.copy(fontSize = 15.sp, fontWeight = FontWeight.SemiBold, color = G.Accent))
                 }
@@ -623,7 +623,7 @@ class MainActivity : ComponentActivity() {
                 val hasAudio = remember(h.audioPath) { Retranscribe.canRun(h.audioPath) }
                 GlassCard(padding = PaddingValues(start = 16.dp, end = 8.dp, top = 12.dp, bottom = 14.dp), onClick = { expanded = !expanded }) {
                     Row(verticalAlignment = Alignment.Top) {
-                        Text(h.text, Modifier.weight(1f).padding(top = 4.dp), style = G.Body.copy(fontSize = 16.sp), maxLines = if (expanded) 50 else 3, overflow = TextOverflow.Ellipsis)
+                        Text(h.text, Modifier.weight(1f).padding(top = 4.dp), style = G.Body, maxLines = if (expanded) 50 else 3, overflow = TextOverflow.Ellipsis)
                         Icon(Ic.more, "More for this dictation", Modifier.size(40.dp).clip(CircleShape).clickable { menuFor = h }.padding(9.dp), tint = G.Ink2)
                     }
                     Spacer(Modifier.height(6.dp))
@@ -768,7 +768,7 @@ class MainActivity : ComponentActivity() {
                 }
             } else if (forgotMode) {
                 GlassCard {
-                    Text("Forgot password", style = G.SectionTitle.copy(fontSize = 19.sp))
+                    Text("Forgot password", style = G.SectionTitle)
                     Meta("Send a reset request. The WhisperAsh admin resets your password and sends you a temporary one; sign in with it, then change it here.", Modifier.padding(vertical = 8.dp))
                     GlassField(email, { email = it }, label = "Email", keyboardType = KeyboardType.Email)
                     Row(Modifier.padding(top = 12.dp), horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
@@ -782,7 +782,7 @@ class MainActivity : ComponentActivity() {
                 }
             } else {
                 GlassCard {
-                    Text(if (registerMode) "Create an account" else "Sign in to WhisperAsh", style = G.SectionTitle.copy(fontSize = 19.sp))
+                    Text(if (registerMode) "Create an account" else "Sign in to WhisperAsh", style = G.SectionTitle)
                     Meta(if (registerMode) "Free words every day, no API keys needed." else "Use the email and password of your WhisperAsh account.", Modifier.padding(top = 4.dp, bottom = 10.dp))
                     GlassField(email, { email = it }, label = "Email", keyboardType = KeyboardType.Email)
                     Spacer(Modifier.height(10.dp))
