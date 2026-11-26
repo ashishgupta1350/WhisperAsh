@@ -16,7 +16,7 @@ import java.util.concurrent.TimeUnit
  * HTTP calls of the meeting recorder (contract: meeting-spec.md) and of "Re-transcribe (better model)". Every call
  * takes its [ApiTarget] (own key = provider directly, account = WhisperAsh gateway with `x-whisperash-purpose`:
  * "meeting" for meetings, "dictation" for History re-transcribes). Audio calls may take 10 minutes, text calls 3;
- * the better-model (gemini-3.5-flash) calls give up after 4.
+ * explicit re-transcriptions give up after 4.
  */
 private fun timed(http: OkHttpClient, minutes: Long) = http.newBuilder()
     .callTimeout(minutes, TimeUnit.MINUTES).readTimeout(minutes, TimeUnit.MINUTES).writeTimeout(minutes, TimeUnit.MINUTES).build()
@@ -60,7 +60,7 @@ class GeminiMeetingClient(http: OkHttpClient) {
 
     fun generate(
         t: ApiTarget, system: String?, text: String, audio: File? = null, mime: String = "audio/mp4",
-        model: String = MODEL, purpose: String = GatewayHeaders.MEETING,
+        model: String = MODEL, purpose: String = GatewayHeaders.MEETING, retranscribe: Boolean = false,
     ): String {
         val parts = JSONArray().put(JSONObject().put("text", text))
         if (audio != null) parts.put(JSONObject().put("inline_data", JSONObject()
@@ -76,7 +76,7 @@ class GeminiMeetingClient(http: OkHttpClient) {
         val req = Request.Builder().url(url(t, model))
             .auth(t, purpose, "x-goog-api-key" to t.token)
             .post(body.toString().toRequestBody(GroqClient.JSON)).build()
-        val client = if (model == BETTER_MODEL) betterHttp else if (audio != null) audioHttp else textHttp
+        val client = if (retranscribe) betterHttp else if (audio != null) audioHttp else textHttp
         val json = execute(client, req, t, "Gemini")
         val provider = if (t.viaAccount) "WhisperAsh" else "Gemini"
         val cand = json.optJSONArray("candidates")?.optJSONObject(0)
@@ -95,7 +95,7 @@ class GeminiMeetingClient(http: OkHttpClient) {
     }
 
     companion object {
-        // Flash-Lite for the normal meeting chain (meeting-spec.md).
+        // Flash-Lite is used for diary audio and text processing.
         const val MODEL = "gemini-3.5-flash-lite"
         const val MAX_OUTPUT = 16384
 
@@ -104,9 +104,10 @@ class GeminiMeetingClient(http: OkHttpClient) {
          * proper nouns than Flash-Lite, with minimal thinking; with thinking left on it hung 5+ minutes.
          */
         const val BETTER_MODEL = "gemini-3.6-flash"
+        const val MEETING_MODEL = BETTER_MODEL
         const val BETTER_LABEL = "Gemini 3.6 Flash"
         const val BETTER_TIMEOUT_MIN = 4L
-        /** generationConfig.thinkingConfig sent with [BETTER_MODEL] (exactly this, no fallback). */
+        /** generationConfig.thinkingConfig sent with Gemini 3.6 Flash. */
         val BETTER_THINKING: Map<String, Any> = mapOf("thinkingLevel" to "minimal", "includeThoughts" to false)
 
         /** Own key: Google directly; account: {server}/gemini/v1beta/models/{model}:generateContent. */

@@ -21,8 +21,7 @@ const crypto = require("crypto");
 // Contract constants (keep identical to the Android app and the Worker)
 // ---------------------------------------------------------------------------------------
 
-// Every Gemini call (audio, ROMANIZE, SUMMARY). Not gemini-3.5-flash: Google routes it to a
-// thinking model that took 5+ minutes on an 86 s clip; Flash-Lite answered in 4.9 s.
+// Flash-Lite is used for diary audio and text processing.
 const GEMINI_MODEL = "gemini-3.5-flash-lite";
 // Gemini 503 / 429 (busy): wait this long and retry the same call once, then the next provider.
 const GEMINI_BUSY_RETRY_MS = 5000;
@@ -38,9 +37,7 @@ const ROMANIZE_MAX_WORDS = 1500;
 const GROQ_LINE_SECONDS = 20;
 const BACKUP_NOTE = "Speakers not separated (backup engine)";
 
-// "Re-transcribe (better model)" (dictation history and meetings, desktop + Android): Gemini 3.6
-// Flash with minimal thinking. Tested on an 86 s clip: 20 s, no thinking tokens, better proper
-// nouns than Flash-Lite. Regular meeting transcription stays on Flash-Lite.
+// Gemini 3.6 Flash with minimal thinking handles meeting audio and explicit re-transcriptions.
 const BETTER_MODEL = "gemini-3.6-flash";
 const BETTER_THINKING = { thinkingLevel: "minimal", includeThoughts: false };
 const DICTATION_RETRANSCRIBE_TIMEOUT_MS = 4 * 60 * 1000;
@@ -361,6 +358,7 @@ Return only the transcript.`
   if (!diary && previous && previous.length) {
     prompt += "\n" + TRANSCRIBE_PREVIOUS.replace("{previous}", previous.join("\n"));
   }
+  const model = diary && !better ? GEMINI_MODEL : BETTER_MODEL;
   const json = await geminiCall(ctx, target, {
     body: JSON.stringify({
       contents: [
@@ -372,11 +370,11 @@ Return only the transcript.`
       generationConfig: {
         temperature: 0,
         maxOutputTokens: 16384,
-        ...(better ? { thinkingConfig: BETTER_THINKING } : {}),
+        ...(model === BETTER_MODEL ? { thinkingConfig: BETTER_THINKING } : {}),
       },
     }),
     timeoutMs: AUDIO_TIMEOUT_MS,
-    model: better ? BETTER_MODEL : GEMINI_MODEL,
+    model,
   });
   const text = geminiText(json);
   if (!text) throw new Error("gemini: empty answer");

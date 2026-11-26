@@ -322,10 +322,10 @@ export default function WhisperAshMeetings({ openMeeting, kind = "meetings", onO
                 <Button
                   size="sm"
                   variant="outline"
-                  title="Transcribe every part again with Gemini 3.6 Flash (slower, better names and Hinglish), then a new summary. You can undo it."
+                  title="Transcribe every part again with Gemini 3.6 Flash, then generate a new summary. You can undo it."
                   onClick={() => void act(() => bridge.meetingRetranscribe(detail.id))}
                 >
-                  <Sparkles size={14} /> Re-transcribe (better model)
+                  <Sparkles size={14} /> {diary ? "Re-transcribe (better model)" : "Re-transcribe with Gemini 3.6 Flash"}
                 </Button>
               ) : null}
               {detail.canUndoRetranscribe && detail.status !== "transcribing" ? (

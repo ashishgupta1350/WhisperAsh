@@ -348,7 +348,8 @@ private fun MeetingDetail(
         }
         if (menu) GlassSheet(title.ifBlank { m.kind.defaultTitle(m.createdMs) }, { menu = false }) {
             // Hidden when the recording is no longer on this phone.
-            if (progress == null && Retranscribe.canRun(m.audioPath)) SheetRow("Re-transcribe (better model)", Ic.spark, Tone.Ai,
+            val retranscribeLabel = if (m.kind.isDiary) "Re-transcribe (better model)" else "Re-transcribe with Gemini 3.6 Flash"
+            if (progress == null && Retranscribe.canRun(m.audioPath)) SheetRow(retranscribeLabel, Ic.spark, Tone.Ai,
                 sub = "${GeminiMeetingClient.BETTER_LABEL}. The current transcript is kept for Undo.") {
                 menu = false; saveTitle()
                 MeetingRecorderService.send(context, MeetingRecorderService.ACTION_RETRY, m.id, fresh = true, better = true)

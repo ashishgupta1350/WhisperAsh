@@ -15,7 +15,7 @@ class RetranscribeTest {
         assertEquals("gemini-3.6-flash", GeminiMeetingClient.BETTER_MODEL)
         assertEquals(mapOf("thinkingLevel" to "minimal", "includeThoughts" to false), GeminiMeetingClient.BETTER_THINKING)
         assertEquals(4L, GeminiMeetingClient.BETTER_TIMEOUT_MIN)
-        assertEquals("gemini-3.5-flash-lite", GeminiMeetingClient.MODEL)   // the normal meeting chain is unchanged
+        assertEquals(GeminiMeetingClient.MEETING_MODEL, GeminiMeetingClient.BETTER_MODEL)
         assertEquals("openai/gpt-oss-120b", GroqMeetingClient.CHAT_MODEL)
     }
 

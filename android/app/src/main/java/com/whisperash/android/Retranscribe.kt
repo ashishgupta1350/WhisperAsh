@@ -69,7 +69,7 @@ class HistoryRetranscriber(private val app: WhisperAshApp) {
         val s = app.settings
         val dictionary = (app.db.dictionary() + listOfNotNull(s.email.takeIf { it.contains("@") })).distinct()
         val raw = gemini.generate(geminiTarget, null, Retranscribe.prompt(s.hindiScript, dictionary), audio, "audio/mp4",
-            GeminiMeetingClient.BETTER_MODEL, GatewayHeaders.DICTATION,
+            GeminiMeetingClient.BETTER_MODEL, GatewayHeaders.DICTATION, retranscribe = true,
         ).let { Prompts.tidyModelOutput(it) }.trim()
         if (raw.isEmpty()) throw NoSpeechException()
         val heard = Prompts.fixSpokenEmails(raw)

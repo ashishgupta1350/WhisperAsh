@@ -195,45 +195,40 @@ class MeetingEngines(private val app: WhisperAshApp, private val better: Boolean
     private fun geminiTarget(): ApiTarget? = app.meetingTarget(MeetingRoutes.GEMINI)
         ?.takeIf { !kind.isDiary || !it.viaAccount || app.settings.userId == diaryOwner }
 
-    fun audio(): List<AudioEngine> = if (better || kind.isDiary) listOfNotNull(
-        geminiTarget()?.let { t ->
+    fun audio(): List<AudioEngine> {
+        val model = if (kind.isDiary && !better) GeminiMeetingClient.MODEL else GeminiMeetingClient.MEETING_MODEL
+        val geminiEngine = geminiTarget()?.let { target ->
             object : AudioEngine {
                 override val name = "gemini"
                 override val needsRomanize = false
                 override fun transcribe(part: MeetingPart, prompt: String) = MeetingText.modelLines(MeetingChain.retryIfBusy {
-                    gemini.generate(t, null, prompt, part.file, part.mime,
-                        if (better) GeminiMeetingClient.BETTER_MODEL else GeminiMeetingClient.MODEL, GatewayHeaders.MEETING)
+                    gemini.generate(target, null, prompt, part.file, part.mime, model, retranscribe = better)
                 })
             }
-        },
-    ) else listOfNotNull(
-        app.meetingTarget(MeetingRoutes.GEMINI)?.let { t ->
-            object : AudioEngine {
-                override val name = "gemini"
-                override val needsRomanize = false
-                override fun transcribe(part: MeetingPart, prompt: String) =
-                    MeetingText.modelLines(MeetingChain.retryIfBusy { gemini.generate(t, null, prompt, part.file, part.mime) })
-            }
-        },
-        app.meetingTarget(MeetingRoutes.DEEPGRAM)?.let { t ->
-            object : AudioEngine {
-                override val name = "deepgram"
-                override val needsRomanize = true
-                override fun transcribe(part: MeetingPart, prompt: String) = MeetingText.deepgramLines(deepgram.listen(t, part.file, part.mime))
-            }
-        },
-        app.meetingTarget(MeetingRoutes.GROQ)?.let { t ->
-            object : AudioEngine {
-                override val name = "groq"
-                override val needsRomanize = true
-                override fun transcribe(part: MeetingPart, prompt: String): List<String> {
-                    val lines = MeetingText.groqLines(groq.transcribe(t, part.file, part.mime))
-                    if (!t.viaAccount) app.db.recordUsage("stt", part.durationMs / 1000.0, 0, GroqMeetingClient.STT_MODEL)
-                    return lines
+        }
+        if (better || kind.isDiary) return listOfNotNull(geminiEngine)
+        return listOfNotNull(
+            geminiEngine,
+            app.meetingTarget(MeetingRoutes.DEEPGRAM)?.let { t ->
+                object : AudioEngine {
+                    override val name = "deepgram"
+                    override val needsRomanize = true
+                    override fun transcribe(part: MeetingPart, prompt: String) = MeetingText.deepgramLines(deepgram.listen(t, part.file, part.mime))
                 }
-            }
-        },
-    )
+            },
+            app.meetingTarget(MeetingRoutes.GROQ)?.let { t ->
+                object : AudioEngine {
+                    override val name = "groq"
+                    override val needsRomanize = true
+                    override fun transcribe(part: MeetingPart, prompt: String): List<String> {
+                        val lines = MeetingText.groqLines(groq.transcribe(t, part.file, part.mime))
+                        if (!t.viaAccount) app.db.recordUsage("stt", part.durationMs / 1000.0, 0, GroqMeetingClient.STT_MODEL)
+                        return lines
+                    }
+                }
+            },
+        )
+    }
 
     fun text(): List<TextEngine> = listOfNotNull(
         geminiTarget()?.let { t ->

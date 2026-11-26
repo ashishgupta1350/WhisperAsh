@@ -165,7 +165,8 @@ class MeetingTest {
     }
 
     // ---------- Gemini model and busy retry ----------
-    @Test fun everyGeminiCallUsesFlashLite() {
+    @Test fun meetingAudioUsesFlashAndTextUsesFlashLite() {
+        assertEquals("gemini-3.6-flash", GeminiMeetingClient.MEETING_MODEL)
         assertEquals("gemini-3.5-flash-lite", GeminiMeetingClient.MODEL)
     }
 

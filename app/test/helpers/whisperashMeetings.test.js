@@ -235,7 +235,7 @@ test("account 429 meeting_limit on a ROMANIZE / SUMMARY text call stops without 
   assert.deepEqual(sleeps, []);
 });
 
-test("every Gemini call uses gemini-3.5-flash-lite (audio, ROMANIZE, SUMMARY)", async () => {
+test("meeting audio uses 3.6 Flash with minimal thinking, while text calls use Flash-Lite", async () => {
   const { fetchImpl, calls } = makeFetch({
     geminiAudio: () => jsonResponse(200, geminiAnswer("[00:00] Speaker 1: नमस्ते")),
     geminiText: () => jsonResponse(200, geminiAnswer("Title: T\n[00:00] Speaker 1: namaste")),
@@ -243,7 +243,12 @@ test("every Gemini call uses gemini-3.5-flash-lite (audio, ROMANIZE, SUMMARY)", 
   await transcribePart(ctx(fetchImpl), AUDIO, { n: 1, total: 1 }); // Devanagari -> ROMANIZE
   await summarize(ctx(fetchImpl), "[00:00] Speaker 1: namaste");
   assert.deepEqual(calls.map((c) => c.kind), ["geminiAudio", "geminiText", "geminiText"]);
-  for (const c of calls) {
+  assert.match(calls[0].url, /\/models\/gemini-3\.6-flash:generateContent$/);
+  assert.deepEqual(JSON.parse(calls[0].init.body).generationConfig.thinkingConfig, {
+    thinkingLevel: "minimal",
+    includeThoughts: false,
+  });
+  for (const c of calls.slice(1)) {
     assert.match(c.url, /\/models\/gemini-3\.5-flash-lite:generateContent$/);
   }
 });
@@ -278,7 +283,7 @@ test("own key calls go direct with the provider's own auth header", async () => 
   await transcribePart(ctx(fetchImpl, { keys: { gemini: "g-key" }, account: ACCOUNT }), AUDIO, { n: 1, total: 1 });
   assert.equal(
     calls[0].url,
-    "https://generativelanguage.googleapis.com/v1beta/models/gemini-3.5-flash-lite:generateContent"
+    "https://generativelanguage.googleapis.com/v1beta/models/gemini-3.6-flash:generateContent"
   );
   assert.equal(calls[0].init.headers["x-goog-api-key"], "g-key");
   assert.equal(calls[0].init.headers.authorization, undefined);
@@ -292,7 +297,7 @@ test("account calls go to the gateway with the session token and the meeting pur
     geminiText: () => jsonResponse(200, geminiAnswer("[00:00] Speaker 3: ok")),
   });
   await transcribePart(ctx(fetchImpl, { keys: {}, account: ACCOUNT }), AUDIO, { n: 1, total: 1 });
-  assert.equal(calls[0].url, "https://ws.example.dev/gemini/v1beta/models/gemini-3.5-flash-lite:generateContent");
+  assert.equal(calls[0].url, "https://ws.example.dev/gemini/v1beta/models/gemini-3.6-flash:generateContent");
   assert.match(calls[1].url, /^https:\/\/ws\.example\.dev\/deepgram\/v1\/listen\?/);
   for (const c of calls) {
     assert.equal(c.init.headers.authorization, "Bearer session-token");
@@ -457,6 +462,7 @@ test("a diary uses Gemini, has a dated title, and syncs only within its account"
   assert.equal(diary.summary, "I went to the park.");
   assert.deepEqual(calls.map((c) => c.kind), ["geminiAudio", "geminiText"]);
   assert.match(calls[0].init.body, /personal voice diary/);
+  assert.match(calls[0].url, /\/models\/gemini-3\.5-flash-lite:generateContent$/);
   assert.match(calls[1].init.body, /first person/);
   assert.equal(store.list().length, 0);
   assert.equal(store.list({ kind: "diaries" }).length, 1);
@@ -655,7 +661,7 @@ test("store: audio is kept after a meeting is done; Re-transcribe uses 3.6 Flash
   assert.equal(m.transcript, "[00:01] Speaker 1: Vercel pe deploy");
   assert.equal(m.canUndoRetranscribe, true);
   const audioCalls = calls.filter((c) => c.kind === "geminiAudio");
-  assert.match(audioCalls[0].url, /gemini-3\.5-flash-lite/);
+  assert.match(audioCalls[0].url, /gemini-3\.6-flash/);
   assert.match(audioCalls[1].url, /gemini-3\.6-flash:/);
   assert.deepEqual(JSON.parse(audioCalls[1].init.body).generationConfig.thinkingConfig, {
     thinkingLevel: "minimal",
