@@ -658,6 +658,8 @@ class WhisperAshMeetings {
    */
   constructor({ dir, environmentManager, getAccount, getOwner, fetch, broadcast, onChange, onStopped, logger }) {
     this.dir = dir;
+    // Old Windows builds only see meeting directories with a valid record ID.
+    this.diaryDir = path.join(dir, ".diaries");
     this.environmentManager = environmentManager;
     this.getAccount = getAccount || (() => null);
     this.getOwner = getOwner || (() => "");
@@ -669,7 +671,7 @@ class WhisperAshMeetings {
     this.logger = logger;
     this.processing = new Map(); // id -> promise
     this.progress = new Map(); // id -> latest progress
-    fs.mkdirSync(this.dir, { recursive: true });
+    fs.mkdirSync(this.diaryDir, { recursive: true });
     this._recoverInterrupted();
     this._pruneOldAudio();
   }
@@ -702,8 +704,10 @@ class WhisperAshMeetings {
     }
   }
 
-  _folder(id) {
-    if (!SAFE_ID.test(String(id || ""))) throw new Error("Bad meeting id");
+  _folder(id, kind) {
+    if (!SAFE_ID.test(String(id || ""))) throw new Error("Bad recording id");
+    const diary = path.join(this.diaryDir, id);
+    if (kind === "diaries" || (!kind && fs.existsSync(diary))) return diary;
     return path.join(this.dir, id);
   }
 
@@ -733,7 +737,7 @@ class WhisperAshMeetings {
 
   _write(meeting, touch = true) {
     if (touch) meeting.updatedMs = Math.max(Date.now(), (meeting.updatedMs || 0) + 1);
-    const folder = this._folder(meeting.id);
+    const folder = this._folder(meeting.id, meeting.kind || "meetings");
     fs.mkdirSync(folder, { recursive: true });
     const file = path.join(folder, "meeting.json");
     fs.writeFileSync(file + ".tmp", JSON.stringify(meeting, null, 2), "utf8");
@@ -741,14 +745,15 @@ class WhisperAshMeetings {
   }
 
   _ids() {
-    try {
-      return fs
-        .readdirSync(this.dir, { withFileTypes: true })
-        .filter((d) => d.isDirectory() && SAFE_ID.test(d.name))
-        .map((d) => d.name);
-    } catch {
-      return [];
-    }
+    return [this.dir, this.diaryDir].flatMap((dir) => {
+      try {
+        return fs.readdirSync(dir, { withFileTypes: true })
+          .filter((d) => d.isDirectory() && SAFE_ID.test(d.name))
+          .map((d) => d.name);
+      } catch {
+        return [];
+      }
+    });
   }
 
   // A recording or a transcription cut off by a quit or crash: keep the audio, offer Retry.
